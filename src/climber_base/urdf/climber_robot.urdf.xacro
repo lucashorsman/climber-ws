@@ -1,0 +1,234 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="climber_robot">
+
+  <!-- Arguments -->
+  <xacro:arg name="use_sim" default="true"/>
+  <xacro:arg name="sim_gz" default="true"/>
+
+  <!-- Properties for Cylinder Climbing Robot -->
+  <!-- The robot wraps around a cylinder and climbs it -->
+  
+  <!-- Cylinder dimensions (the pole being climbed) -->
+  <xacro:property name="cylinder_diameter" value="0.15"/>  <!-- 15cm diameter pole -->
+  <xacro:property name="cylinder_radius" value="${cylinder_diameter/2}"/>
+  
+  <!-- Mecanum wheel properties -->
+  <xacro:property name="wheel_radius" value="0.06"/>  <!-- 6cm radius mecanum wheel -->
+  <xacro:property name="wheel_width" value="0.05"/>   <!-- 5cm wide -->
+  <xacro:property name="wheel_mass" value="0.4"/>
+
+  <!-- Wheel center distance from cylinder axis (default/home position) -->
+  <!-- The inner face of the wheel touches the cylinder surface -->
+  <xacro:property name="wheel_radial_distance" value="${cylinder_radius + wheel_width/2}"/>
+
+  <!-- Linear actuator properties -->
+  <xacro:property name="actuator_stroke" value="0.05"/>       <!-- 5cm total travel -->
+  <xacro:property name="actuator_home" value="0.0"/>          <!-- 0 = wheel touching cylinder -->
+  <xacro:property name="actuator_min" value="-0.01"/>         <!-- 1cm inward (pressing into cylinder) -->
+  <xacro:property name="actuator_max" value="${actuator_stroke - 0.01}"/>  <!-- 4cm outward (releasing) -->
+  <xacro:property name="actuator_mass" value="0.3"/>
+  <xacro:property name="actuator_length" value="0.06"/>       <!-- Visual length of actuator body -->
+  <xacro:property name="actuator_width" value="0.025"/>       <!-- Visual cross-section -->
+  
+  <!-- Frame properties -->
+  <xacro:property name="arm_length" value="0.08"/>             <!-- Radial arm from wheel outward -->
+  <xacro:property name="arm_thickness" value="0.02"/>
+  <xacro:property name="frame_ring_radius" value="${wheel_radial_distance + wheel_width/2 + arm_length}"/>
+  <xacro:property name="frame_height" value="0.02"/>
+  <xacro:property name="base_mass" value="3.0"/>
+
+  <!-- Angles for X formation (45°, 135°, 225°, 315°) -->
+  <xacro:property name="angle_ne" value="${pi/4}"/>      <!-- 45° - Northeast -->
+  <xacro:property name="angle_nw" value="${3*pi/4}"/>    <!-- 135° - Northwest -->
+  <xacro:property name="angle_sw" value="${5*pi/4}"/>    <!-- 225° - Southwest -->
+  <xacro:property name="angle_se" value="${7*pi/4}"/>    <!-- 315° - Southeast -->
+
+  <!-- Include materials -->
+  <xacro:include filename="$(find climber_base)/urdf/materials.xacro"/>
+
+  <!-- Include ros2_control -->
+  <xacro:include filename="$(find climber_base)/urdf/ros2_control.xacro"/>
+
+  <!-- Include Gazebo plugins -->
+  <xacro:include filename="$(find climber_base)/urdf/gazebo.xacro"/>
+
+  <!-- Inertia macros -->
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertia ixx="${m*(y*y+z*z)/12}" ixy="0" ixz="0"
+             iyy="${m*(x*x+z*z)/12}" iyz="0"
+             izz="${m*(x*x+y*y)/12}"/>
+  </xacro:macro>
+
+  <xacro:macro name="cylinder_inertia" params="m r h">
+    <inertia ixx="${m*(3*r*r+h*h)/12}" ixy="0" ixz="0"
+             iyy="${m*(3*r*r+h*h)/12}" iyz="0"
+             izz="${m*r*r/2}"/>
+  </xacro:macro>
+
+  <xacro:macro name="sphere_inertia" params="m r">
+    <inertia ixx="${2*m*r*r/5}" ixy="0" ixz="0"
+             iyy="${2*m*r*r/5}" iyz="0"
+             izz="${2*m*r*r/5}"/>
+  </xacro:macro>
+
+  <!-- Base Link (center of robot, aligned with cylinder axis) -->
+  <link name="base_link"/>
+
+  <!-- Chassis - inertial mass at center (no solid visual to avoid hiding wheels) -->
+  <joint name="chassis_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="chassis"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="chassis">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="${base_mass}"/>
+      <xacro:cylinder_inertia m="${base_mass}" r="${frame_ring_radius}" h="${frame_height}"/>
+    </inertial>
+  </link>
+
+  <!-- Radial arm + linear actuator + wheel assembly macro -->
+  <!-- Chain: base_link → carriage_anchor (fixed, sets radial direction) -->
+  <!--        → actuator_carriage (prismatic, slides radially) -->
+  <!--        → wheel (continuous, spins for climbing) -->
+  <xacro:macro name="climbing_wheel_assembly" params="prefix angle">
+    <!-- Frame ring attachment point (fixed to outer ring) -->
+    <joint name="${prefix}_frame_node_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${prefix}_frame_node"/>
+      <origin xyz="${frame_ring_radius * cos(angle)} ${frame_ring_radius * sin(angle)} 0" rpy="0 0 ${angle}"/>
+    </joint>
+
+    <link name="${prefix}_frame_node">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${arm_thickness} ${arm_thickness} ${arm_thickness}"/>
+        </geometry>
+        <material name="blue"/>
+      </visual>
+    </link>
+
+    <!-- Carriage anchor: fixed to base_link, oriented so X points radially outward -->
+    <!-- The prismatic joint will slide along negative X (inward toward cylinder) -->
+    <joint name="${prefix}_anchor_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${prefix}_anchor"/>
+      <origin xyz="${frame_ring_radius * cos(angle)} ${frame_ring_radius * sin(angle)} 0" rpy="0 0 ${angle}"/>
+    </joint>
+
+    <link name="${prefix}_anchor">
+      <!-- Actuator body visual (the static part of the linear actuator) -->
+      <visual>
+        <origin xyz="${-actuator_length/2} 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${actuator_length} ${actuator_width} ${actuator_width}"/>
+        </geometry>
+        <material name="red"/>
+      </visual>
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="${actuator_mass / 2}"/>
+        <xacro:box_inertia m="${actuator_mass / 2}" x="${actuator_length}" y="${actuator_width}" z="${actuator_width}"/>
+      </inertial>
+    </link>
+
+    <!-- Linear actuator prismatic joint -->
+    <!-- Slides along negative X (radially inward, toward cylinder center) -->
+    <!-- position=0 → wheel at default radial distance (touching cylinder) -->
+    <!-- position<0 → wheel pressed harder into cylinder -->
+    <!-- position>0 → wheel pulled away from cylinder -->
+    <joint name="${prefix}_actuator_joint" type="prismatic">
+      <parent link="${prefix}_anchor"/>
+      <child link="${prefix}_carriage"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="-1 0 0"/>
+      <limit lower="${actuator_min}" upper="${actuator_max}" effort="100.0" velocity="0.1"/>
+      <dynamics damping="5.0" friction="1.0"/>
+    </joint>
+
+    <link name="${prefix}_carriage">
+      <!-- Actuator rod visual (the moving part) -->
+      <visual>
+        <origin xyz="${-(frame_ring_radius - wheel_radial_distance)/2} 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${frame_ring_radius - wheel_radial_distance} ${actuator_width * 0.6} ${actuator_width * 0.6}"/>
+        </geometry>
+        <material name="grey"/>
+      </visual>
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="${actuator_mass / 2}"/>
+        <xacro:box_inertia m="${actuator_mass / 2}" x="${actuator_length}" y="${actuator_width}" z="${actuator_width}"/>
+      </inertial>
+    </link>
+
+    <!-- Mecanum wheel attached to carriage -->
+    <!-- Offset from carriage to where the wheel center should be -->
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="${prefix}_carriage"/>
+      <child link="${prefix}_wheel"/>
+      <origin xyz="${-(frame_ring_radius - wheel_radial_distance)} 0 0" rpy="0 0 0"/>
+      <axis xyz="0 -1 0"/>
+      <limit effort="10.0" velocity="10.0"/>
+      <dynamics damping="0.2" friction="0.3"/>
+    </joint>
+
+    <link name="${prefix}_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="dark_grey"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <mass value="${wheel_mass}"/>
+        <xacro:cylinder_inertia m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <!-- Create 4 climbing wheel assemblies in X formation -->
+  <xacro:climbing_wheel_assembly prefix="ne" angle="${angle_ne}"/>
+  <xacro:climbing_wheel_assembly prefix="nw" angle="${angle_nw}"/>
+  <xacro:climbing_wheel_assembly prefix="sw" angle="${angle_sw}"/>
+  <xacro:climbing_wheel_assembly prefix="se" angle="${angle_se}"/>
+
+  <!-- Connecting arcs between adjacent frame nodes (ring segments) -->
+  <xacro:macro name="frame_arc" params="name angle1 angle2">
+    <xacro:property name="mid_angle" value="${(angle1 + angle2) / 2}"/>
+    <xacro:property name="arc_len" value="${frame_ring_radius * 2 * sin((angle2 - angle1)/2)}"/>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${name}"/>
+      <origin xyz="${frame_ring_radius * cos(mid_angle)} ${frame_ring_radius * sin(mid_angle)} 0"
+              rpy="0 0 ${mid_angle}"/>
+    </joint>
+    <link name="${name}">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${arm_thickness} ${arc_len} ${arm_thickness}"/>
+        </geometry>
+        <material name="blue"/>
+      </visual>
+    </link>
+  </xacro:macro>
+
+  <!-- Connect adjacent frame nodes to form the outer ring -->
+  <xacro:frame_arc name="arc_ne_nw" angle1="${angle_ne}" angle2="${angle_nw}"/>
+  <xacro:frame_arc name="arc_nw_sw" angle1="${angle_nw}" angle2="${angle_sw}"/>
+  <xacro:frame_arc name="arc_sw_se" angle1="${angle_sw}" angle2="${angle_se}"/>
+  <xacro:frame_arc name="arc_se_ne" angle1="${angle_se}" angle2="${angle_ne + 2*pi}"/>
+
+</robot>

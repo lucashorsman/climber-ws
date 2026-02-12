@@ -1,0 +1,110 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="climber_ros2_control" params="use_sim:=true sim_gz:=true">
+
+    <ros2_control name="climber_ros2_control" type="system">
+
+      <xacro:if value="${use_sim and sim_gz}">
+        <hardware>
+          <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+        </hardware>
+      </xacro:if>
+
+      <xacro:unless value="${use_sim}">
+        <hardware>
+          <!-- Replace with your real hardware interface plugin -->
+          <plugin>mock_components/GenericSystem</plugin>
+          <param name="calculate_dynamics">true</param>
+        </hardware>
+      </xacro:unless>
+
+      <!-- NE Wheel (Northeast - 45°) -->
+      <joint name="ne_wheel_joint">
+        <command_interface name="velocity">
+          <param name="min">-10</param>
+          <param name="max">10</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <!-- NW Wheel (Northwest - 135°) -->
+      <joint name="nw_wheel_joint">
+        <command_interface name="velocity">
+          <param name="min">-10</param>
+          <param name="max">10</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <!-- SW Wheel (Southwest - 225°) -->
+      <joint name="sw_wheel_joint">
+        <command_interface name="velocity">
+          <param name="min">-10</param>
+          <param name="max">10</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <!-- SE Wheel (Southeast - 315°) -->
+      <joint name="se_wheel_joint">
+        <command_interface name="velocity">
+          <param name="min">-10</param>
+          <param name="max">10</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <!-- Linear Actuators (prismatic - control wheel radial distance) -->
+      <!-- NE Actuator -->
+      <joint name="ne_actuator_joint">
+        <command_interface name="position">
+          <param name="min">-0.01</param>
+          <param name="max">0.04</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <!-- NW Actuator -->
+      <joint name="nw_actuator_joint">
+        <command_interface name="position">
+          <param name="min">-0.01</param>
+          <param name="max">0.04</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <!-- SW Actuator -->
+      <joint name="sw_actuator_joint">
+        <command_interface name="position">
+          <param name="min">-0.01</param>
+          <param name="max">0.04</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+      <!-- SE Actuator -->
+      <joint name="se_actuator_joint">
+        <command_interface name="position">
+          <param name="min">-0.01</param>
+          <param name="max">0.04</param>
+        </command_interface>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+
+    </ros2_control>
+
+  </xacro:macro>
+
+  <!-- Instantiate the ros2_control macro -->
+  <xacro:climber_ros2_control use_sim="$(arg use_sim)" sim_gz="$(arg sim_gz)"/>
+
+</robot>

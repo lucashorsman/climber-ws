@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Gazebo colors -->
+  <gazebo reference="chassis">
+    <material>Gazebo/Blue</material>
+  </gazebo>
+
+  <!-- Wheel surface properties -->
+  <gazebo reference="ne_wheel">
+    <material>Gazebo/DarkGrey</material>
+    <mu1>0.8</mu1>
+    <mu2>0.4</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+
+  <gazebo reference="nw_wheel">
+    <material>Gazebo/DarkGrey</material>
+    <mu1>0.8</mu1>
+    <mu2>0.4</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+
+  <gazebo reference="sw_wheel">
+    <material>Gazebo/DarkGrey</material>
+    <mu1>0.8</mu1>
+    <mu2>0.4</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+
+  <gazebo reference="se_wheel">
+    <material>Gazebo/DarkGrey</material>
+    <mu1>0.8</mu1>
+    <mu2>0.4</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.001</minDepth>
+  </gazebo>
+
+  <!-- Gazebo ros2_control plugin for gz sim (Harmonic/Fortress) -->
+  <gazebo>
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(find climber_base)/config/climber_controllers.yaml</parameters>
+    </plugin>
+  </gazebo>
+
+</robot>

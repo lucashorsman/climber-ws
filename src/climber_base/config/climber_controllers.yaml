@@ -1,0 +1,50 @@
+# Controller Manager configuration for Cylinder Climbing Robot
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    velocity_controller:
+      type: velocity_controllers/JointGroupVelocityController
+
+    position_controller:
+      type: position_controllers/JointGroupPositionController
+
+# Velocity Controller - wheel spin commands
+# Accepts Float64MultiArray on /velocity_controller/commands
+velocity_controller:
+  ros__parameters:
+    joints:
+      - ne_wheel_joint
+      - nw_wheel_joint
+      - sw_wheel_joint
+      - se_wheel_joint
+
+# Position Controller - linear actuator commands
+# Accepts Float64MultiArray on /position_controller/commands
+# Values are in meters: 0 = touching cylinder, negative = pressing in, positive = pulling away
+position_controller:
+  ros__parameters:
+    joints:
+      - ne_actuator_joint
+      - nw_actuator_joint
+      - sw_actuator_joint
+      - se_actuator_joint
+
+# Joint State Broadcaster configuration
+joint_state_broadcaster:
+  ros__parameters:
+    joints:
+      - ne_wheel_joint
+      - nw_wheel_joint
+      - sw_wheel_joint
+      - se_wheel_joint
+      - ne_actuator_joint
+      - nw_actuator_joint
+      - sw_actuator_joint
+      - se_actuator_joint
+    interfaces:
+      - position
+      - velocity
