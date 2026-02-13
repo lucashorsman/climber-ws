@@ -1,0 +1,28 @@
+# Udev rules for Climber MCUs
+# Creates stable symlinks /dev/climber_{ne,nw,sw,se} regardless of USB enumeration order.
+#
+# SETUP:
+#   1. Find each MCU's unique serial number:
+#        udevadm info -a -n /dev/ttyACM0 | grep '{serial}'
+#
+#   2. Replace PLACEHOLDER_SERIAL_* below with the actual values.
+#
+#   3. Install:
+#        sudo cp 99-climber-mcus.rules /etc/udev/rules.d/
+#        sudo udevadm control --reload-rules
+#        sudo udevadm trigger
+#
+#   4. Verify:
+#        ls -la /dev/climber_*
+
+# Northeast MCU
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{serial}=="PLACEHOLDER_SERIAL_NE", SYMLINK+="climber_ne", MODE="0666"
+
+# Northwest MCU
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{serial}=="PLACEHOLDER_SERIAL_NW", SYMLINK+="climber_nw", MODE="0666"
+
+# Southwest MCU
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{serial}=="PLACEHOLDER_SERIAL_SW", SYMLINK+="climber_sw", MODE="0666"
+
+# Southeast MCU
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{serial}=="PLACEHOLDER_SERIAL_SE", SYMLINK+="climber_se", MODE="0666"

@@ -13,9 +13,8 @@
 
       <xacro:unless value="${use_sim}">
         <hardware>
-          <!-- Replace with your real hardware interface plugin -->
-          <plugin>mock_components/GenericSystem</plugin>
-          <param name="calculate_dynamics">true</param>
+          <plugin>climber_base/ClimberHardwareInterface</plugin>
+          <param name="comms_timeout">0.5</param>
         </hardware>
       </xacro:unless>
 

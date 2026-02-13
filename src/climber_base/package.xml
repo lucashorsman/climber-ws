@@ -29,6 +29,9 @@
   <depend>velocity_controllers</depend>
   <depend>position_controllers</depend>
 
+  <!-- Custom messages -->
+  <depend>climber_msgs</depend>
+
   <!-- Gazebo Sim (gz) dependencies -->
   <depend>ros_gz_sim</depend>
   <depend>ros_gz_bridge</depend>
@@ -50,5 +53,6 @@
 
   <export>
     <build_type>ament_cmake</build_type>
+    <hardware_interface plugin="${prefix}/climber_base_hardware.xml"/>
   </export>
 </package>

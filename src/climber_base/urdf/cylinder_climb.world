@@ -3,6 +3,9 @@
 <sdf version="1.6">
   <world name="cylinder_climb">
 
+    <!-- Disable gravity -->
+    <gravity>0 0 0</gravity>
+
     <!-- Plugin for simulating physics -->
     <plugin
       filename="gz-sim-physics-system"
@@ -92,7 +95,7 @@
         <collision name="collision">
           <geometry>
             <cylinder>
-              <radius>0.055</radius>
+              <radius>0.035</radius>
               <length>5.0</length>
             </cylinder>
           </geometry>
@@ -108,7 +111,7 @@
         <visual name="visual">
           <geometry>
             <cylinder>
-              <radius>0.055</radius>
+              <radius>0.035</radius>
               <length>5.0</length>
             </cylinder>
           </geometry>
