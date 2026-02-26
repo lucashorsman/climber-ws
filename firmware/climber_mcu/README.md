@@ -22,7 +22,7 @@ ROS 2 (ArmCommand) ──► micro-ROS ──► MCU
                            Motor    Motor      Sensors
 ```
 
-## Building
+## Building -- ignore this section
 
 ```bash
 # Install PlatformIO CLI
@@ -41,7 +41,7 @@ pio run --environment esp32 -DARM_ID=3   # SE
 pio run --target upload
 ```
 
-## Hardware Setup
+## Hardware Setup -- ignore
 
 | Function | Pin | Notes |
 |----------|-----|-------|
