@@ -17,10 +17,10 @@ controller_manager:
 velocity_controller:
   ros__parameters:
     joints:
-      - ne_wheel_joint
-      - nw_wheel_joint
-      - sw_wheel_joint
-      - se_wheel_joint
+      - n_wheel_joint
+      - w_wheel_joint
+      - s_wheel_joint
+      - e_wheel_joint
 
 # Position Controller - linear actuator commands
 # Accepts Float64MultiArray on /position_controller/commands
@@ -28,23 +28,23 @@ velocity_controller:
 position_controller:
   ros__parameters:
     joints:
-      - ne_actuator_joint
-      - nw_actuator_joint
-      - sw_actuator_joint
-      - se_actuator_joint
+      - n_actuator_joint
+      - w_actuator_joint
+      - s_actuator_joint
+      - e_actuator_joint
 
 # Joint State Broadcaster configuration
 joint_state_broadcaster:
   ros__parameters:
     joints:
-      - ne_wheel_joint
-      - nw_wheel_joint
-      - sw_wheel_joint
-      - se_wheel_joint
-      - ne_actuator_joint
-      - nw_actuator_joint
-      - sw_actuator_joint
-      - se_actuator_joint
+      - n_wheel_joint
+      - w_wheel_joint
+      - s_wheel_joint
+      - e_wheel_joint
+      - n_actuator_joint
+      - w_actuator_joint
+      - s_actuator_joint
+      - e_actuator_joint
     interfaces:
       - position
       - velocity

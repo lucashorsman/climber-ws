@@ -9,7 +9,7 @@
   <!-- The robot wraps around a cylinder and climbs it -->
   
   <!-- Cylinder dimensions (the pole being climbed) -->
-  <xacro:property name="cylinder_diameter" value="0.15"/>  <!-- 15cm diameter pole -->
+  <xacro:property name="cylinder_diameter" value=".40"/>  <!-- 30cm diameter pole -->
   <xacro:property name="cylinder_radius" value="${cylinder_diameter/2}"/>
   
   <!-- Mecanum wheel properties -->
@@ -22,10 +22,10 @@
   <xacro:property name="wheel_radial_distance" value="${cylinder_radius + wheel_width/2}"/>
 
   <!-- Linear actuator properties -->
-  <xacro:property name="actuator_stroke" value="0.05"/>       <!-- 5cm total travel -->
+  <xacro:property name="actuator_stroke" value="0.16"/>       <!-- 16cm total travel -->
   <xacro:property name="actuator_home" value="0.0"/>          <!-- 0 = wheel touching cylinder -->
   <xacro:property name="actuator_min" value="-0.01"/>         <!-- 1cm inward (pressing into cylinder) -->
-  <xacro:property name="actuator_max" value="${actuator_stroke - 0.01}"/>  <!-- 4cm outward (releasing) -->
+  <xacro:property name="actuator_max" value="${actuator_stroke - 0.01}"/>  <!-- 15cm outward (releasing) -->
   <xacro:property name="actuator_mass" value="0.3"/>
   <xacro:property name="actuator_length" value="0.06"/>       <!-- Visual length of actuator body -->
   <xacro:property name="actuator_width" value="0.025"/>       <!-- Visual cross-section -->
@@ -33,15 +33,16 @@
   <!-- Frame properties -->
   <xacro:property name="arm_length" value="0.08"/>             <!-- Radial arm from wheel outward -->
   <xacro:property name="arm_thickness" value="0.02"/>
-  <xacro:property name="frame_ring_radius" value="${wheel_radial_distance + wheel_width/2 + arm_length}"/>
+  <xacro:property name="frame_ring_radius" value="0.565"/> <!-- 1.13m / 2 -->
+  <xacro:property name="frame_size" value="1.13"/>
   <xacro:property name="frame_height" value="0.02"/>
   <xacro:property name="base_mass" value="3.0"/>
 
-  <!-- Angles for X formation (45°, 135°, 225°, 315°) -->
-  <xacro:property name="angle_ne" value="${pi/4}"/>      <!-- 45° - Northeast -->
-  <xacro:property name="angle_nw" value="${3*pi/4}"/>    <!-- 135° - Northwest -->
-  <xacro:property name="angle_sw" value="${5*pi/4}"/>    <!-- 225° - Southwest -->
-  <xacro:property name="angle_se" value="${7*pi/4}"/>    <!-- 315° - Southeast -->
+  <!-- Angles for N, W, S, E formation (0, 90, 180, 270 degrees) -->
+  <xacro:property name="angle_n" value="${0}"/>           <!-- 0° - North (+X) -->
+  <xacro:property name="angle_w" value="${pi/2}"/>        <!-- 90° - West (+Y) -->
+  <xacro:property name="angle_s" value="${pi}"/>          <!-- 180° - South (-X) -->
+  <xacro:property name="angle_e" value="${3*pi/2}"/>      <!-- 270° - East (-Y) -->
 
   <!-- Include materials -->
   <xacro:include filename="$(find climber_base)/urdf/materials.xacro"/>
@@ -199,36 +200,46 @@
   </xacro:macro>
 
   <!-- Create 4 climbing wheel assemblies in X formation -->
-  <xacro:climbing_wheel_assembly prefix="ne" angle="${angle_ne}"/>
-  <xacro:climbing_wheel_assembly prefix="nw" angle="${angle_nw}"/>
-  <xacro:climbing_wheel_assembly prefix="sw" angle="${angle_sw}"/>
-  <xacro:climbing_wheel_assembly prefix="se" angle="${angle_se}"/>
+  <xacro:climbing_wheel_assembly prefix="n" angle="${angle_n}"/>
+  <xacro:climbing_wheel_assembly prefix="w" angle="${angle_w}"/>
+  <xacro:climbing_wheel_assembly prefix="s" angle="${angle_s}"/>
+  <xacro:climbing_wheel_assembly prefix="e" angle="${angle_e}"/>
 
-  <!-- Connecting arcs between adjacent frame nodes (ring segments) -->
-  <xacro:macro name="frame_arc" params="name angle1 angle2">
-    <xacro:property name="mid_angle" value="${(angle1 + angle2) / 2}"/>
-    <xacro:property name="arc_len" value="${frame_ring_radius * 2 * sin((angle2 - angle1)/2)}"/>
+  <!-- Frame sides forming a square -->
+  <xacro:macro name="frame_side" params="name angle">
     <joint name="${name}_joint" type="fixed">
       <parent link="base_link"/>
       <child link="${name}"/>
-      <origin xyz="${frame_ring_radius * cos(mid_angle)} ${frame_ring_radius * sin(mid_angle)} 0"
-              rpy="0 0 ${mid_angle}"/>
+      <origin xyz="${frame_ring_radius * cos(angle)} ${frame_ring_radius * sin(angle)} 0"
+              rpy="0 0 ${angle}"/>
     </joint>
     <link name="${name}">
       <visual>
         <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <box size="${arm_thickness} ${arc_len} ${arm_thickness}"/>
+          <!-- Box: thick in X (radial), long in Y (tangential), thick in Z -->
+          <box size="${arm_thickness} ${frame_size} ${arm_thickness}"/>
         </geometry>
         <material name="blue"/>
       </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${arm_thickness} ${frame_size} ${arm_thickness}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="0.5"/>
+        <xacro:box_inertia m="0.5" x="${arm_thickness}" y="${frame_size}" z="${arm_thickness}"/>
+      </inertial>
     </link>
   </xacro:macro>
 
-  <!-- Connect adjacent frame nodes to form the outer ring -->
-  <xacro:frame_arc name="arc_ne_nw" angle1="${angle_ne}" angle2="${angle_nw}"/>
-  <xacro:frame_arc name="arc_nw_sw" angle1="${angle_nw}" angle2="${angle_sw}"/>
-  <xacro:frame_arc name="arc_sw_se" angle1="${angle_sw}" angle2="${angle_se}"/>
-  <xacro:frame_arc name="arc_se_ne" angle1="${angle_se}" angle2="${angle_ne + 2*pi}"/>
+  <!-- The 4 sides of the 113cm square frame aligned with N, W, S, E anchors -->
+  <xacro:frame_side name="frame_n" angle="${angle_n}"/>
+  <xacro:frame_side name="frame_w" angle="${angle_w}"/>
+  <xacro:frame_side name="frame_s" angle="${angle_s}"/>
+  <xacro:frame_side name="frame_e" angle="${angle_e}"/>
 
 </robot>

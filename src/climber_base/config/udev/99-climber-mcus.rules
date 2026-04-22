@@ -1,5 +1,5 @@
 # Udev rules for Climber MCUs
-# Creates stable symlinks /dev/climber_{ne,nw,sw,se} regardless of USB enumeration order.
+# Creates stable symlinks /dev/climber_{n,w,s,e} regardless of USB enumeration order.
 #
 # SETUP:
 #   1. Find each MCU's unique serial number:

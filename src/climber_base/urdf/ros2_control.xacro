@@ -19,7 +19,7 @@
       </xacro:unless>
 
       <!-- NE Wheel (Northeast - 45°) -->
-      <joint name="ne_wheel_joint">
+      <joint name="n_wheel_joint">
         <command_interface name="velocity">
           <param name="min">-10</param>
           <param name="max">10</param>
@@ -29,7 +29,7 @@
       </joint>
 
       <!-- NW Wheel (Northwest - 135°) -->
-      <joint name="nw_wheel_joint">
+      <joint name="w_wheel_joint">
         <command_interface name="velocity">
           <param name="min">-10</param>
           <param name="max">10</param>
@@ -39,7 +39,7 @@
       </joint>
 
       <!-- SW Wheel (Southwest - 225°) -->
-      <joint name="sw_wheel_joint">
+      <joint name="s_wheel_joint">
         <command_interface name="velocity">
           <param name="min">-10</param>
           <param name="max">10</param>
@@ -49,7 +49,7 @@
       </joint>
 
       <!-- SE Wheel (Southeast - 315°) -->
-      <joint name="se_wheel_joint">
+      <joint name="e_wheel_joint">
         <command_interface name="velocity">
           <param name="min">-10</param>
           <param name="max">10</param>
@@ -60,40 +60,40 @@
 
       <!-- Linear Actuators (prismatic - control wheel radial distance) -->
       <!-- NE Actuator -->
-      <joint name="ne_actuator_joint">
+      <joint name="n_actuator_joint">
         <command_interface name="position">
           <param name="min">-0.01</param>
-          <param name="max">0.04</param>
+          <param name="max">0.15</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>
       </joint>
 
       <!-- NW Actuator -->
-      <joint name="nw_actuator_joint">
+      <joint name="w_actuator_joint">
         <command_interface name="position">
           <param name="min">-0.01</param>
-          <param name="max">0.04</param>
+          <param name="max">0.15</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>
       </joint>
 
       <!-- SW Actuator -->
-      <joint name="sw_actuator_joint">
+      <joint name="s_actuator_joint">
         <command_interface name="position">
           <param name="min">-0.01</param>
-          <param name="max">0.04</param>
+          <param name="max">0.15</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>
       </joint>
 
       <!-- SE Actuator -->
-      <joint name="se_actuator_joint">
+      <joint name="e_actuator_joint">
         <command_interface name="position">
           <param name="min">-0.01</param>
-          <param name="max">0.04</param>
+          <param name="max">0.15</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>

@@ -1,11 +1,11 @@
 """
 micro_ros_agents.launch.py
 
-Launches 4 micro-ROS agents — one per MCU arm (NE, NW, SW, SE).
+Launches 4 micro-ROS agents — one per MCU arm (N, W, S, E).
 Each agent bridges a serial port to the ROS 2 graph.
 
 Launch arguments allow overriding the serial device for each arm
-(defaults expect udev symlinks: /dev/climber_{ne,nw,sw,se}).
+(defaults expect udev symlinks: /dev/climber_{n,w,s,e}).
 """
 
 from launch import LaunchDescription
@@ -15,7 +15,8 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    arms = ['ne', 'nw', 'sw', 'se']
+    # arms = ['n', 'w', 's', 'e']
+    arms = ['n']
 
     declared_arguments = []
     agent_nodes = []
@@ -26,7 +27,7 @@ def generate_launch_description():
         declared_arguments.append(
             DeclareLaunchArgument(
                 arg_name,
-                default_value=f'/dev/climber_{arm}',
+                default_value=f'/dev/ttyACM0',
                 description=f'Serial device for {arm.upper()} MCU'
             )
         )
@@ -55,5 +56,6 @@ def generate_launch_description():
                 output='screen',
             )
         )
+
 
     return LaunchDescription(declared_arguments + agent_nodes)

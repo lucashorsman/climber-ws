@@ -14,26 +14,23 @@ namespace climber_base
 {
 
 // ═══════════════════════════════════════════════════════════════════
-//  Lifecycle: on_init
+//  Lifecycle: on_init (Humble-compatible)
 // ═══════════════════════════════════════════════════════════════════
 hardware_interface::CallbackReturn ClimberHardwareInterface::on_init(
-  const hardware_interface::HardwareComponentInterfaceParams & params)
+  const hardware_interface::HardwareInfo & info)
 {
-  if (hardware_interface::SystemInterface::on_init(params) !=
-    hardware_interface::CallbackReturn::SUCCESS)
+  if (hardware_interface::SystemInterface::on_init(info) !=
+      hardware_interface::CallbackReturn::SUCCESS)
   {
     return hardware_interface::CallbackReturn::ERROR;
   }
-
-  // Store the parent executor for later use
-  parent_executor_ = params.executor;
 
   // Read optional hardware parameter for comms timeout
   if (info_.hardware_parameters.count("comms_timeout")) {
     comms_timeout_sec_ = std::stod(info_.hardware_parameters.at("comms_timeout"));
   }
 
-  // Validate expected joint count: 4 wheel + 4 actuator = 8
+  // Validate expected joint count: 4 arms × (wheel + actuator)
   if (info_.joints.size() != NUM_ARMS * 2) {
     RCLCPP_FATAL(rclcpp::get_logger("ClimberHardwareInterface"),
       "Expected %zu joints, got %zu", NUM_ARMS * 2, info_.joints.size());
@@ -58,17 +55,10 @@ hardware_interface::CallbackReturn ClimberHardwareInterface::on_init(
 hardware_interface::CallbackReturn ClimberHardwareInterface::on_configure(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  // Create an internal ROS 2 node for topic I/O
+  // Create internal ROS node
   node_ = rclcpp::Node::make_shared("climber_hardware_interface");
 
-  // Add our node to the parent executor (provided by controller_manager)
-  if (auto executor = parent_executor_.lock()) {
-    executor->add_node(node_);
-  } else {
-    RCLCPP_WARN(node_->get_logger(),
-      "Parent executor not available — MCU topics won't be spun automatically");
-  }
-
+  // NOTE: No executor injection in Humble
   setup_topics();
 
   RCLCPP_INFO(node_->get_logger(), "Configured — topics created");
@@ -76,13 +66,13 @@ hardware_interface::CallbackReturn ClimberHardwareInterface::on_configure(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Lifecycle: on_activate — send initial zero commands
+//  Lifecycle: on_activate — initialize timestamps + zero commands
 // ═══════════════════════════════════════════════════════════════════
 hardware_interface::CallbackReturn ClimberHardwareInterface::on_activate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  // Initialise timestamps
   auto now = node_->get_clock()->now();
+
   for (size_t i = 0; i < NUM_ARMS; ++i) {
     last_state_rx_time_[i] = now;
     arms_[i].wheel_velocity_cmd = 0.0;
@@ -99,7 +89,6 @@ hardware_interface::CallbackReturn ClimberHardwareInterface::on_activate(
 hardware_interface::CallbackReturn ClimberHardwareInterface::on_deactivate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  // Send zero commands to all MCUs
   for (size_t i = 0; i < NUM_ARMS; ++i) {
     auto cmd = climber_msgs::msg::ArmCommand();
     cmd.actuator_setpoint = 0.0f;
@@ -113,14 +102,11 @@ hardware_interface::CallbackReturn ClimberHardwareInterface::on_deactivate(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Lifecycle: on_cleanup — tear down node and executor
+//  Lifecycle: on_cleanup — destroy node
 // ═══════════════════════════════════════════════════════════════════
 hardware_interface::CallbackReturn ClimberHardwareInterface::on_cleanup(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  if (auto executor = parent_executor_.lock()) {
-    executor->remove_node(node_);
-  }
   node_.reset();
 
   RCLCPP_INFO(rclcpp::get_logger("ClimberHardwareInterface"), "Cleaned up");
@@ -138,21 +124,21 @@ ClimberHardwareInterface::export_state_interfaces()
   for (size_t i = 0; i < NUM_ARMS; ++i) {
     const std::string prefix(kArmPrefixes[i]);
 
-    // Wheel joint: position + velocity state
     state_interfaces.emplace_back(
       prefix + "_wheel_joint",
       hardware_interface::HW_IF_POSITION,
       &arms_[i].wheel_position);
+
     state_interfaces.emplace_back(
       prefix + "_wheel_joint",
       hardware_interface::HW_IF_VELOCITY,
       &arms_[i].wheel_velocity);
 
-    // Actuator joint: position + velocity state
     state_interfaces.emplace_back(
       prefix + "_actuator_joint",
       hardware_interface::HW_IF_POSITION,
       &arms_[i].actuator_position);
+
     state_interfaces.emplace_back(
       prefix + "_actuator_joint",
       hardware_interface::HW_IF_VELOCITY,
@@ -173,13 +159,11 @@ ClimberHardwareInterface::export_command_interfaces()
   for (size_t i = 0; i < NUM_ARMS; ++i) {
     const std::string prefix(kArmPrefixes[i]);
 
-    // Wheel joint: velocity command
     command_interfaces.emplace_back(
       prefix + "_wheel_joint",
       hardware_interface::HW_IF_VELOCITY,
       &arms_[i].wheel_velocity_cmd);
 
-    // Actuator joint: position command
     command_interfaces.emplace_back(
       prefix + "_actuator_joint",
       hardware_interface::HW_IF_POSITION,
@@ -190,19 +174,16 @@ ClimberHardwareInterface::export_command_interfaces()
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  read — pull latest sensor data from micro-ROS topic callbacks
+//  read — check comms timeout
 // ═══════════════════════════════════════════════════════════════════
 hardware_interface::return_type ClimberHardwareInterface::read(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
-  // Data is updated by the subscriber callbacks in the background executor.
-  // The state variables are already pointed to by the exported state interfaces,
-  // so controller_manager reads them directly.
-  //
-  // Check for communication timeouts.
   auto now = node_->get_clock()->now();
+
   for (size_t i = 0; i < NUM_ARMS; ++i) {
     double dt = (now - last_state_rx_time_[i]).seconds();
+
     if (dt > comms_timeout_sec_) {
       RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
         "No state from MCU '%s' for %.1fs (timeout=%.1fs)",
@@ -214,7 +195,7 @@ hardware_interface::return_type ClimberHardwareInterface::read(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  write — push commands to MCUs via micro-ROS topics
+//  write — publish commands
 // ═══════════════════════════════════════════════════════════════════
 hardware_interface::return_type ClimberHardwareInterface::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
@@ -224,6 +205,7 @@ hardware_interface::return_type ClimberHardwareInterface::write(
     cmd.actuator_setpoint = static_cast<float>(arms_[i].actuator_position_cmd);
     cmd.wheel_velocity = static_cast<float>(arms_[i].wheel_velocity_cmd);
     cmd.mode = climber_msgs::msg::ArmCommand::NORMAL;
+
     arm_cmd_pubs_[i]->publish(cmd);
   }
 
@@ -231,18 +213,16 @@ hardware_interface::return_type ClimberHardwareInterface::write(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  setup_topics — create publishers and subscribers for each arm
+//  setup_topics
 // ═══════════════════════════════════════════════════════════════════
 void ClimberHardwareInterface::setup_topics()
 {
   for (size_t i = 0; i < NUM_ARMS; ++i) {
     const std::string prefix(kArmPrefixes[i]);
 
-    // Publisher: /mcu_{ne,nw,sw,se}/arm_cmd
     arm_cmd_pubs_[i] = node_->create_publisher<climber_msgs::msg::ArmCommand>(
       "/mcu_" + prefix + "/arm_cmd", 10);
 
-    // Subscriber: /mcu_{ne,nw,sw,se}/arm_state
     arm_state_subs_[i] = node_->create_subscription<climber_msgs::msg::ArmState>(
       "/mcu_" + prefix + "/arm_state", 10,
       [this, i](const climber_msgs::msg::ArmState::SharedPtr msg) {
@@ -255,7 +235,7 @@ void ClimberHardwareInterface::setup_topics()
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  arm_state_callback — receive state from one MCU
+//  arm_state_callback
 // ═══════════════════════════════════════════════════════════════════
 void ClimberHardwareInterface::arm_state_callback(
   size_t arm_idx,
@@ -275,9 +255,6 @@ void ClimberHardwareInterface::arm_state_callback(
 
 }  // namespace climber_base
 
-// ═══════════════════════════════════════════════════════════════════
-//  Register the plugin with pluginlib
-// ═══════════════════════════════════════════════════════════════════
 PLUGINLIB_EXPORT_CLASS(
   climber_base::ClimberHardwareInterface,
   hardware_interface::SystemInterface)

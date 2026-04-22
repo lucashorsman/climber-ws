@@ -15,7 +15,7 @@
 #include "hardware_interface/handle.hpp"
 #include "hardware_interface/hardware_info.hpp"
 #include "hardware_interface/types/hardware_interface_return_values.hpp"
-#include "hardware_interface/types/hardware_component_interface_params.hpp"
+//#include "hardware_interface/types/hardware_component_interface_params.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/macros.hpp"
 #include "rclcpp_lifecycle/state.hpp"
@@ -51,9 +51,10 @@ public:
   RCLCPP_SHARED_PTR_DEFINITIONS(ClimberHardwareInterface)
 
   // ── Lifecycle transitions ────────────────────────────────────────
-  hardware_interface::CallbackReturn on_init(
-    const hardware_interface::HardwareComponentInterfaceParams & params) override;
-
+//  hardware_interface::CallbackReturn on_init(
+  //  const hardware_interface::HardwareComponentInterfaceParams & params) override;
+hardware_interface::CallbackReturn on_init(
+  const hardware_interface::HardwareInfo & info) override;
   hardware_interface::CallbackReturn on_configure(
     const rclcpp_lifecycle::State & previous_state) override;
 
@@ -80,7 +81,7 @@ public:
 private:
   // Arm prefixes in joint-order matching the URDF
   static constexpr std::array<const char *, NUM_ARMS> kArmPrefixes = {
-    "ne", "nw", "sw", "se"
+    "n", "w", "s", "e"
   };
 
   // Per-arm runtime data
@@ -91,7 +92,7 @@ private:
 
   // ROS 2 node for topic I/O (runs inside the hardware interface)
   rclcpp::Node::SharedPtr node_;
-  rclcpp::Executor::WeakPtr parent_executor_;
+
 
   // Per-arm subscribers & publishers
   std::array<rclcpp::Subscription<climber_msgs::msg::ArmState>::SharedPtr, NUM_ARMS> arm_state_subs_;

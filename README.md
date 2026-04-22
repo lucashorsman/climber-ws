@@ -3,11 +3,11 @@
 A ROS 2 (Jazzy) robot that wraps around a vertical cylinder (pole/tree) and climbs it using 4 mecanum wheels in an X formation. Each wheel is mounted on a linear actuator that controls radial grip pressure, with ToF sensors providing surface distance feedback.
 
 ```
-        NW (135°)       NE (45°)
+        W (135°)       N (45°)
             \           /
              [  pole  ]
             /           \
-        SW (225°)       SE (315°)
+        S (225°)       E (315°)
 ```
 
 ## Repository Structure
@@ -90,7 +90,7 @@ Global decision-making in ROS 2 with fast local safety loops on each MCU.
                      └──────┬───────┬───────┬───────┬──────┘
                             │       │       │       │  micro-ROS
                        ┌────▼┐ ┌────▼┐ ┌────▼┐ ┌────▼┐
-                       │ NE  │ │ NW  │ │ SW  │ │ SE  │  MCUs
+                       │ N  │ │ W  │ │ S  │ │ E  │  MCUs
                        │ PID │ │ PID │ │ PID │ │ PID │  (ESP32)
                        │ ToF │ │ ToF │ │ ToF │ │ ToF │
                        │safe │ │safe │ │safe │ │safe │
@@ -105,8 +105,8 @@ Global decision-making in ROS 2 with fast local safety loops on each MCU.
 | Manual grip | `/grip_cmd` | `std_msgs/Float64` | on demand |
 | Controller → Wheels | `/velocity_controller/commands` | `Float64MultiArray` | 20 Hz |
 | Controller → Actuators | `/position_controller/commands` | `Float64MultiArray` | 20 Hz |
-| HW Interface → MCU | `/mcu_{ne,nw,sw,se}/arm_cmd` | `climber_msgs/ArmCommand` | 100 Hz |
-| MCU → HW Interface | `/mcu_{ne,nw,sw,se}/arm_state` | `climber_msgs/ArmState` | 50 Hz |
+| HW Interface → MCU | `/mcu_{n,w,s,e}/arm_cmd` | `climber_msgs/ArmCommand` | 100 Hz |
+| MCU → HW Interface | `/mcu_{n,w,s,e}/arm_state` | `climber_msgs/ArmState` | 50 Hz |
 | Controller → Monitor | `/climber_state` | `climber_msgs/ClimberState` | 20 Hz |
 | JSB → TF | `/joint_states` | `sensor_msgs/JointState` | 100 Hz |
 
@@ -134,7 +134,7 @@ Global decision-making in ROS 2 with fast local safety loops on each MCU.
 ### ClimberState (aggregated)
 | Field | Type | Description |
 |-------|------|-------------|
-| `arms` | `ArmState[4]` | Per-arm states [NE, NW, SW, SE] |
+| `arms` | `ArmState[4]` | Per-arm states [N, W, S, E] |
 | `robot_state` | `uint8` | 0=IDLE, 1=APPROACHING, 2=GRIPPING, 3=CLIMBING, 4=ORBITING, 5=STOPPED, 6=FAULT |
 
 ---
@@ -160,18 +160,18 @@ Plus 4 arc links connecting frame nodes into an outer ring.
 | `cylinder_diameter` | 0.15 m | Pole diameter (change this for different trees) |
 | `wheel_radius` | 0.06 m | Mecanum wheel radius |
 | `wheel_width` | 0.05 m | Wheel width along axle |
-| `actuator_stroke` | 0.05 m | Total actuator travel |
+| `actuator_stroke` | 0.16 m | Total actuator travel |
 | `actuator_min` | -0.01 m | Max press-in (grip) |
-| `actuator_max` | 0.04 m | Max pull-out (release) |
+| `actuator_max` | 0.15 m | Max pull-out (release) |
 
 ### Joint Conventions
 
-**Wheel joints** (`{ne,nw,sw,se}_wheel_joint`):
+**Wheel joints** (`{n,w,s,e}_wheel_joint`):
 - Type: continuous
 - Axis: `0 -1 0` (negative tangential Y)
 - Positive velocity = climb UP
 
-**Actuator joints** (`{ne,nw,sw,se}_actuator_joint`):
+**Actuator joints** (`{n,w,s,e}_actuator_joint`):
 - Type: prismatic
 - Axis: `-1 0 0` (radially inward)
 - Position 0.0 = wheel touching cylinder
@@ -270,13 +270,13 @@ When running on real hardware with ToF data:
 ```
 v_orbit = cylinder_radius × angular.z
 
-NE = (vz + v_orbit) / wheel_radius
-NW = (vz - v_orbit) / wheel_radius
-SW = (vz + v_orbit) / wheel_radius
-SE = (vz - v_orbit) / wheel_radius
+N = (vz + v_orbit) / wheel_radius
+W = (vz - v_orbit) / wheel_radius
+S = (vz + v_orbit) / wheel_radius
+E = (vz - v_orbit) / wheel_radius
 ```
 
-| Motion | NE | NW | SW | SE |
+| Motion | N | W | S | E |
 |--------|----|----|----|----|
 | Climb up | + | + | + | + |
 | Orbit CCW | + | − | + | − |
@@ -333,11 +333,11 @@ INIT → IDLE → NORMAL ←→ EMERGENCY_GRIP
 ```bash
 cd firmware/climber_mcu
 
-# Build for NE arm (default ARM_ID=0)
+# Build for N arm (default ARM_ID=0)
 pio run
 
 # Override arm ID for other MCUs:
-# Edit platformio.ini: -DARM_ID=1 (NW), 2 (SW), 3 (SE)
+# Edit platformio.ini: -DARM_ID=1 (W), 2 (S), 3 (E)
 
 # Upload
 pio run --target upload
@@ -437,7 +437,7 @@ ls -la /dev/climber_*
 
 ```bash
 cd firmware/climber_mcu
-# Edit platformio.ini: set ARM_ID per MCU (0=NE, 1=NW, 2=SW, 3=SE)
+# Edit platformio.ini: set ARM_ID per MCU (0=N, 1=W, 2=S, 3=E)
 pio run --target upload
 ```
 
@@ -468,10 +468,10 @@ ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {z: 0.3}}" -r 10
 ros2 topic echo /climber_state
 
 # Check MCU health
-ros2 topic hz /mcu_ne/arm_state
-ros2 topic hz /mcu_nw/arm_state
-ros2 topic hz /mcu_sw/arm_state
-ros2 topic hz /mcu_se/arm_state
+ros2 topic hz /mcu_n/arm_state
+ros2 topic hz /mcu_w/arm_state
+ros2 topic hz /mcu_s/arm_state
+ros2 topic hz /mcu_e/arm_state
 ```
 
 ### Launch Arguments
@@ -483,8 +483,8 @@ ros2 topic hz /mcu_se/arm_state
 | | `use_rviz` | `true` | Launch RViz |
 | `real_robot.launch.py` | `use_rviz` | `true` | Launch RViz |
 | | `launch_agents` | `true` | Start micro-ROS agents |
-| `micro_ros_agents.launch.py` | `{ne,nw,sw,se}_serial_dev` | `/dev/climber_*` | Serial device path |
-| | `{ne,nw,sw,se}_baud` | `921600` | Serial baud rate |
+| `micro_ros_agents.launch.py` | `{n,w,s,e}_serial_dev` | `/dev/climber_*` | Serial device path |
+| | `{n,w,s,e}_baud` | `921600` | Serial baud rate |
 
 ---
 
@@ -494,7 +494,7 @@ Follow this staged testing procedure:
 
 | Stage | What | How |
 |-------|------|-----|
-| 1 | Single MCU on bench | Flash one MCU, connect motor + ToF. Verify topics with `ros2 topic echo /mcu_ne/arm_state`. Send manual commands. |
+| 1 | Single MCU on bench | Flash one MCU, connect motor + ToF. Verify topics with `ros2 topic echo /mcu_n/arm_state`. Send manual commands. |
 | 2 | 4 MCUs connected | All 4 agents up. `ros2 topic list \| grep mcu` should show 8 topics. Check rates with `ros2 topic hz`. |
 | 3 | Open-loop control | Send ArmCommand via CLI. Confirm each arm moves correctly, wheels spin right direction. |
 | 4 | Grip on static pole | Robot on pole, send grip command. Verify all 4 arms achieve contact, ToF converges. |
@@ -534,7 +534,7 @@ The firmware skeleton targets ESP32 but the structure is portable:
 | Robot falls off pole in Gazebo | No mechanical constraint in sim | Use `/grip_cmd` with negative value; increase friction in `gazebo.xacro` |
 | Controllers not loading | `ros2 control list_controllers` shows inactive | Check `climber_controllers.yaml` joint names match URDF |
 | MCU topic not appearing | micro-ROS agent not connecting | Check serial port path, baud rate, udev rules; run agent manually |
-| FAULT state won't clear | Latched fault | Send `CLEAR_FAULT` mode: `ros2 topic pub --once /mcu_ne/arm_cmd climber_msgs/msg/ArmCommand "{mode: 3}"` |
+| FAULT state won't clear | Latched fault | Send `CLEAR_FAULT` mode: `ros2 topic pub --once /mcu_n/arm_cmd climber_msgs/msg/ArmCommand "{mode: 3}"` |
 | Wheels spin wrong direction | Encoder wiring or axis sign | Swap encoder A/B wires or invert `PIN_WHEEL_DIR` logic |
 | Actuator overshoots | PID gains too aggressive | Reduce `KP_ACTUATOR` in firmware, increase `KD_ACTUATOR` |
 | `climber_msgs` import error in controller | Package not sourced | `source install/setup.bash` after building |

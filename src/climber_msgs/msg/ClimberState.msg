@@ -3,7 +3,7 @@
 
 std_msgs/Header header
 
-# Per-arm states (order: NE, NW, SW, SE)
+# Per-arm states (order: N, W, S, E)
 climber_msgs/ArmState[4] arms
 
 # Overall robot state machine

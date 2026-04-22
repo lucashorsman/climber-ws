@@ -17,8 +17,8 @@ Subscriptions:
   /mcu_*/arm_state   (ArmState)     — [REAL only] per-arm sensor feedback
 
 Publications:
-  /velocity_controller/commands  (Float64MultiArray) — wheel spin [ne,nw,sw,se]
-  /position_controller/commands  (Float64MultiArray) — actuator pos [ne,nw,sw,se]
+  /velocity_controller/commands  (Float64MultiArray) — wheel spin [n,w,s,e]
+  /position_controller/commands  (Float64MultiArray) — actuator pos [n,w,s,e]
   /climber_state                 (ClimberState)       — aggregated robot state
 
 State Machine:
@@ -28,21 +28,21 @@ State Machine:
                             (any) → FAULT
 
 Wheel layout (looking down at the cylinder from above):
-  NW (135°)   NE (45°)
+  W (135°)   N (45°)
        \\       /
         [cyl]
        /       \\
-  SW (225°)   SE (315°)
+  S (225°)   E (315°)
 
 Mecanum kinematic mapping:
   Climb (vz):  all wheels same sign → vertical motion
-  Orbit (wz):  NE/SW vs NW/SE opposite → circumferential motion
+  Orbit (wz):  N/S vs W/E opposite → circumferential motion
 
 Actuator convention (prismatic, radial inward):
   position  0.0  → wheel surface just touching cylinder
   position <0    → pressing into cylinder (grip)
   position >0    → pulling away (release)
-  limits: -0.01 m … +0.04 m
+  limits: -0.01 m … +0.15 m
 """
 
 import enum
@@ -62,8 +62,8 @@ except ImportError:
 
 
 # ── Arm indices (must match ros2_control joint order) ───────────────
-NE, NW, SW, SE = 0, 1, 2, 3
-ARM_NAMES = ['ne', 'nw', 'sw', 'se']
+N, W, S, E = 0, 1, 2, 3
+ARM_NAMES = ['n', 'w', 's', 'e']
 
 
 class RobotState(enum.IntEnum):
@@ -184,12 +184,15 @@ class CylinderClimbController(Node):
 
         v_orbit = self.cylinder_radius * wz
 
-        # Mecanum kinematics — joint order: [ne, nw, sw, se]
+        # Mecanum kinematics — joint order: [n, w, s, e]
+        # Mecanums are A on N/S and B on E/W.
+        # Climb (vz) uses forward drive on all.
+        # Orbit (wz) uses opposing drives between A and B type wheels to generate lateral force.
         wheels = [
-            (vz + v_orbit) / self.wheel_radius,   # NE
-            (vz - v_orbit) / self.wheel_radius,    # NW
-            (vz + v_orbit) / self.wheel_radius,    # SW
-            (vz - v_orbit) / self.wheel_radius,    # SE
+            (vz + v_orbit) / self.wheel_radius,   # N (A-type)
+            (vz - v_orbit) / self.wheel_radius,   # W (B-type)
+            (vz + v_orbit) / self.wheel_radius,   # S (A-type)
+            (vz - v_orbit) / self.wheel_radius,   # E (B-type)
         ]
 
         # Clamp
@@ -213,7 +216,7 @@ class CylinderClimbController(Node):
 
     def grip_callback(self, msg: Float64):
         """Manual grip override — set all actuators to the same position."""
-        pos = max(-0.01, min(0.04, msg.data))
+        pos = max(-0.01, min(0.15, msg.data))
         self.grip_positions = [pos] * 4
         self._publish_actuators()
 
@@ -307,7 +310,7 @@ class CylinderClimbController(Node):
                 # Clamp the step to avoid overshoot
                 step = max(-0.002, min(0.002, error * 0.5))
                 new_pos = self.grip_positions[i] - step  # minus because inward is negative
-                self.grip_positions[i] = max(-0.01, min(0.04, new_pos))
+                self.grip_positions[i] = max(-0.01, min(0.15, new_pos))
 
     # ════════════════════════════════════════════════════════════════
     #  State Machine

@@ -28,14 +28,14 @@ ROS 2 (ArmCommand) ──► micro-ROS ──► MCU
 # Install PlatformIO CLI
 pip install platformio
 
-# Build for NE arm (ARM_ID=0)
+# Build for N arm (ARM_ID=0)
 cd firmware/climber_mcu
 pio run
 
 # Build for a different arm (override in platformio.ini or):
-pio run --environment esp32 -DARM_ID=1   # NW
-pio run --environment esp32 -DARM_ID=2   # SW
-pio run --environment esp32 -DARM_ID=3   # SE
+pio run --environment esp32 -DARM_ID=1   # W
+pio run --environment esp32 -DARM_ID=2   # S
+pio run --environment esp32 -DARM_ID=3   # E
 
 # Upload
 pio run --target upload

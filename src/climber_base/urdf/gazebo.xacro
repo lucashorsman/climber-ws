@@ -7,7 +7,7 @@
   </gazebo>
 
   <!-- Wheel surface properties -->
-  <gazebo reference="ne_wheel">
+  <gazebo reference="n_wheel">
     <material>Gazebo/DarkGrey</material>
     <mu1>0.8</mu1>
     <mu2>0.4</mu2>
@@ -16,7 +16,7 @@
     <minDepth>0.001</minDepth>
   </gazebo>
 
-  <gazebo reference="nw_wheel">
+  <gazebo reference="w_wheel">
     <material>Gazebo/DarkGrey</material>
     <mu1>0.8</mu1>
     <mu2>0.4</mu2>
@@ -25,7 +25,7 @@
     <minDepth>0.001</minDepth>
   </gazebo>
 
-  <gazebo reference="sw_wheel">
+  <gazebo reference="s_wheel">
     <material>Gazebo/DarkGrey</material>
     <mu1>0.8</mu1>
     <mu2>0.4</mu2>
@@ -34,7 +34,7 @@
     <minDepth>0.001</minDepth>
   </gazebo>
 
-  <gazebo reference="se_wheel">
+  <gazebo reference="e_wheel">
     <material>Gazebo/DarkGrey</material>
     <mu1>0.8</mu1>
     <mu2>0.4</mu2>

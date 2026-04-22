@@ -4,7 +4,6 @@
  * Single firmware for all 4 arm MCUs. ARM_ID selects which arm this
  * instance controls (set via platformio.ini build flag or DIP switch).
  *
- * Architecture (Option C — Hybrid):
  *   - Fast local PID loop for actuator position control using ToF feedback
  *   - Wheel velocity passthrough to motor driver
  *   - Local safety override: emergency grip on comms loss or contact fault
@@ -19,7 +18,101 @@
  */
 
 #include <Arduino.h>
-#include <micro_ros_arduino.h>
+#include <micro_ros_platformio.h>
+#include <Wire.h>
+#include <Adafruit_VL53L0X.h>
+#include "RoboClaw.h"
+
+//odrive support
+#include "ODriveCAN.h"
+
+// CAN bus baudrate. Make sure this matches for every device on the bus
+#define CAN_BAUDRATE 1000000
+
+// ODrive node_id for odrv0
+#define ODRV0_NODE_ID 0
+
+#define IS_ESP32_TWAI // ESP32 boards with built-in TWAI (CAN) interface. Directly uses the ESP-IDF TWAI driver.
+
+#include "driver/twai.h"
+#include "ODriveESP32TWAI.hpp"
+
+// Pins used to connect to CAN bus transceiver
+#define ESP32_TWAI_TX_PIN 17 // these are actually d8 
+#define ESP32_TWAI_RX_PIN 18 //d9
+
+ESP32TWAIIntf can_intf;
+
+bool setupCan() {
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
+        (gpio_num_t)ESP32_TWAI_TX_PIN,
+        (gpio_num_t)ESP32_TWAI_RX_PIN,
+        TWAI_MODE_NORMAL
+    );
+
+    twai_timing_config_t t_config;
+    switch (CAN_BAUDRATE) {
+        case 1000000: t_config = TWAI_TIMING_CONFIG_1MBITS(); break;
+        case 800000:  t_config = TWAI_TIMING_CONFIG_800KBITS(); break;
+        case 500000:  t_config = TWAI_TIMING_CONFIG_500KBITS(); break;
+        case 250000:  t_config = TWAI_TIMING_CONFIG_250KBITS(); break;
+        case 125000:  t_config = TWAI_TIMING_CONFIG_125KBITS(); break;
+        case 100000:  t_config = TWAI_TIMING_CONFIG_100KBITS(); break;
+        case 50000:   t_config = TWAI_TIMING_CONFIG_50KBITS(); break;
+        case 25000:   t_config = TWAI_TIMING_CONFIG_25KBITS(); break;
+        default:      t_config = TWAI_TIMING_CONFIG_250KBITS(); break;
+    }
+
+    twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+    if (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK) {
+        return false;
+    }
+
+    if (twai_start() != ESP_OK) {
+        twai_driver_uninstall();
+        return false;
+    }
+
+    return true;
+}
+
+// Instantiate ODrive objects
+ODriveCAN odrv0(wrap_can_intf(can_intf), ODRV0_NODE_ID); // Standard CAN message ID
+ODriveCAN* odrives[] = {&odrv0}; // Make sure all ODriveCAN instances are accounted for here
+
+struct ODriveUserData {
+  Heartbeat_msg_t last_heartbeat;
+  bool received_heartbeat = false;
+  Get_Encoder_Estimates_msg_t last_feedback;
+  bool received_feedback = false;
+};
+
+// Keep some application-specific user data for every ODrive.
+ODriveUserData odrv0_user_data;
+
+// Called every time a Heartbeat message arrives from the ODrive
+void onHeartbeat(Heartbeat_msg_t& msg, void* user_data) {
+  ODriveUserData* odrv_user_data = static_cast<ODriveUserData*>(user_data);
+  odrv_user_data->last_heartbeat = msg;
+  odrv_user_data->received_heartbeat = true;
+}
+
+// Called every time a feedback message arrives from the ODrive
+void onFeedback(Get_Encoder_Estimates_msg_t& msg, void* user_data) {
+  ODriveUserData* odrv_user_data = static_cast<ODriveUserData*>(user_data);
+  odrv_user_data->last_feedback = msg;
+  odrv_user_data->received_feedback = true;
+}
+
+// Called for every message that arrives on the CAN bus
+void onCanMessage(const CanMsg& msg) {
+  for (auto odrive: odrives) {
+    onReceive(msg, *odrive);
+  }
+}
+// end odrive support
+
 
 #include <rcl/rcl.h>
 #include <rclc/rclc.h>
@@ -34,10 +127,10 @@
 // ═══════════════════════════════════════════════════════════════════
 
 #ifndef ARM_ID
-#define ARM_ID 0  // 0=NE, 1=NW, 2=SW, 3=SE
+#define ARM_ID 0  // 0=N, 1=W, 2=S, 3=E
 #endif
 
-static const char* ARM_NAMES[] = {"ne", "nw", "sw", "se"};
+static const char* ARM_NAMES[] = {"n", "w", "s", "e"};
 static const char* ARM_NAME = ARM_NAMES[ARM_ID];
 
 // Timing
@@ -46,9 +139,20 @@ static const char* ARM_NAME = ARM_NAMES[ARM_ID];
 #define TOF_READ_HZ       100
 #define COMMS_TIMEOUT_MS  200
 
+// TCA9548A I2C multiplexer
+#define TCAADDR 0x70
+
+// RoboClaw actuator controller
+#define ROBOCLAW_ADDR 0x80
+#define ROBO_BAUDRATE 38400
+#define ACTUATOR_PPR 103.8f
+#define ACTUATOR_M_PER_REV 0.008f
+#define ROBO_MAX_SPEED 10000
+#define ROBO_MIN_SPEED 50
+
 // Actuator limits (metres, matching URDF)
 #define ACTUATOR_MIN     -0.01f
-#define ACTUATOR_MAX      0.04f
+#define ACTUATOR_MAX      0.15f
 #define EMERGENCY_GRIP   -0.008f  // clamp position on fault
 
 // PID gains for actuator position control (tune these!)
@@ -56,30 +160,34 @@ static const char* ARM_NAME = ARM_NAMES[ARM_ID];
 #define KI_ACTUATOR  10.0f
 #define KD_ACTUATOR  5.0f
 
+//helper
+static constexpr float PI_F = 3.14159265358979323846f;
+static constexpr float TWO_PI_F = 2.0f * PI_F;
+
 // ═══════════════════════════════════════════════════════════════════
-//  Pin definitions (adapt to your hardware)
+//  Pin definitions change me when i get christians code
 // ═══════════════════════════════════════════════════════════════════
 
-// Wheel motor (H-bridge)
-#define PIN_WHEEL_PWM     25
-#define PIN_WHEEL_DIR     26
-#define PIN_WHEEL_ENC_A   34
-#define PIN_WHEEL_ENC_B   35
 
 // Linear actuator motor
-#define PIN_ACT_PWM       27
-#define PIN_ACT_DIR       14
-#define PIN_ACT_LIMIT_IN  32   // limit switch — fully retracted
-#define PIN_ACT_LIMIT_OUT 33   // limit switch — fully extended
+// #define PIN_ACT_PWM       D6
+// #define PIN_ACT_DIR       D11
+#define PIN_ACT_LIMIT_IN  D3  // limit switch — fully retracted
+#define PIN_ACT_LIMIT_OUT D2   // limit switch — fully extended
 
+// RoboClaw UART
+#define PIN_ROBO_RX       D6 // maybe swap
+#define PIN_ROBO_TX       D7 
+#define ESP32_TWAI_TX_PIN 17
+#define ESP32_TWAI_RX_PIN 18
 // ToF sensor array (I2C)
-#define PIN_SDA           21
-#define PIN_SCL           22
-#define PIN_TOF_XSHUT_0   4   // XSHUT for multiplexing individual sensors
-#define PIN_TOF_XSHUT_1   16
-#define PIN_TOF_XSHUT_2   17
+#define PIN_SDA           A4 //used for imu and the muxer
+#define PIN_SCL           A5
+#define PIN_TOF_XSHUT_0   A0   // XSHUT for multiplexing individual sensors
+#define PIN_TOF_XSHUT_1   A1
+#define PIN_TOF_XSHUT_2   A2
 
-#define NUM_TOF_SENSORS   3
+#define NUM_TOF_SENSORS   5
 
 // ═══════════════════════════════════════════════════════════════════
 //  Global state
@@ -103,6 +211,30 @@ static volatile float actuator_velocity = 0.0f;    // m/s
 static volatile float wheel_position = 0.0f;       // rad (accumulated)
 static volatile float wheel_velocity = 0.0f;       // rad/s
 
+static Adafruit_VL53L0X tof_sensors[NUM_TOF_SENSORS];
+static bool tof_sensor_ok[NUM_TOF_SENSORS] = {false};
+
+HardwareSerial RoboSerial(1);
+RoboClaw roboclaw(&RoboSerial, 10000);
+
+// RoboClaw PID gains loaded from controller
+static float rc_kp = 0.0f;
+static float rc_ki = 0.0f;
+static float rc_kd = 0.0f;
+static uint32_t rc_ki_max = 0;
+static uint32_t rc_deadzone = 1;
+static uint32_t rc_pos_min = 0;
+static uint32_t rc_pos_max = 0;
+
+// Movement controller state
+static float actuator_pid_integral = 0.0f;
+static int32_t actuator_last_error = 0;
+static uint32_t actuator_last_time_ms = 0;
+static int32_t actuator_target_ticks = 0;
+static int32_t actuator_home_ticks = 0;
+static bool actuator_pid_active = false;
+static bool actuator_ready = false;
+
 // Commands from ROS 2
 static volatile float cmd_actuator_setpoint = 0.0f;
 static volatile float cmd_wheel_velocity = 0.0f;
@@ -113,10 +245,6 @@ static unsigned long last_cmd_rx_ms = 0;
 static unsigned long last_state_pub_ms = 0;
 static unsigned long last_tof_read_ms = 0;
 static unsigned long last_control_us = 0;
-
-// PID state for actuator
-static float pid_integral = 0.0f;
-static float pid_prev_error = 0.0f;
 
 // ═══════════════════════════════════════════════════════════════════
 //  micro-ROS entities
@@ -139,10 +267,17 @@ static climber_msgs__msg__ArmCommand cmd_msg;
 
 void setup_micro_ros();
 void setup_hardware();
+void setup_tof_sensors();
+void tca_select(uint8_t channel);
 void read_tof_sensors();
 void read_wheel_encoder();
 void read_actuator_position_sensor();
 void run_actuator_pid(float dt);
+void initialize_actuator_motion();
+void move_actuator_relative_ticks(int32_t delta_ticks);
+void update_actuator_pid();
+int32_t meters_to_ticks(float metres);
+float ticks_to_meters(int32_t ticks);
 void set_wheel_motor(float velocity_cmd);
 void set_actuator_motor(float pwm);  // -1.0 to 1.0
 void publish_state();
@@ -157,29 +292,73 @@ static volatile long encoder_count = 0;
 static const float ENCODER_TICKS_PER_REV = 1440.0f;  // Adjust to your encoder
 static const float WHEEL_RADIUS = 0.06f;              // metres
 
-void IRAM_ATTR encoder_isr() {
-    if (digitalRead(PIN_WHEEL_ENC_B)) {
-        encoder_count++;
-    } else {
-        encoder_count--;
+static inline void blink_setup_led(uint8_t pulses = 1, uint16_t on_ms = 80, uint16_t off_ms = 80) {
+    pinMode(LED_BUILTIN, OUTPUT);
+    for (uint8_t i = 0; i < pulses; ++i) {
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(on_ms);
+        digitalWrite(LED_BUILTIN, LOW);
+        if (i + 1 < pulses) {
+            delay(off_ms);
+        }
     }
 }
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  Setup
 // ═══════════════════════════════════════════════════════════════════
 
 void setup() {
-    Serial.begin(921600);
+    // Serial.begin(115200);
+
+    blink_setup_led();
 
     setup_hardware();
+    blink_setup_led();
+    //initialize_actuator_motion();
+    // blink_setup_led();
     setup_micro_ros();
+    blink_setup_led(2);
+      // Register callbacks for the heartbeat and encoder feedback messages
+      fw_state = STATE_IDLE;
+      last_control_us = micros();
+      
+      // Topic names: /mcu_{ne,nw,sw,se}/arm_state and /mcu_{ne,nw,sw,se}/arm_cmd
+      // (created in setup_micro_ros)
+      
+    odrv0.onFeedback(onFeedback, &odrv0_user_data);
+    odrv0.onStatus(onHeartbeat, &odrv0_user_data);
+    if (!setupCan()) {
+     // Serial.println("CAN failed to initialize: reset required");
+        blink_setup_led(3, 150, 150);
+        while (true); // spin indefinitely
+  }
 
-    fw_state = STATE_IDLE;
-    last_control_us = micros();
-
-    // Topic names: /mcu_{ne,nw,sw,se}/arm_state and /mcu_{ne,nw,sw,se}/arm_cmd
-    // (created in setup_micro_ros)
+  // Serial.println("Waiting for ODrive...");
+//   while (!odrv0_user_data.received_heartbeat) {
+//     blink_setup_led(1, 100, 100);
+//     pumpEvents(can_intf);
+// }
+  while (odrv0_user_data.last_heartbeat.Axis_State != ODriveAxisState::AXIS_STATE_CLOSED_LOOP_CONTROL) {
+    odrv0.clearErrors();
+    delay(1);
+    blink_setup_led();
+    odrv0.setState(ODriveAxisState::AXIS_STATE_CLOSED_LOOP_CONTROL);
+    // Serial.print("fail");
+    // Pump events for 150ms. This delay is needed for two reasons;
+    // 1. If there is an error condition, such as missing DC power, the ODrive might
+    //    briefly attempt to enter CLOSED_LOOP_CONTROL state, so we can't rely
+    //    on the first heartbeat response, so we want to receive at least two
+    //    heartbeats (100ms default interval).
+    // 2. If the bus is congested, the setState command won't get through
+    //    immediately but can be delayed.
+    for (int i = 0; i < 15; ++i) {
+      delay(10);
+      pumpEvents(can_intf);
+    }
+    break;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -189,6 +368,7 @@ void setup() {
 void loop() {
     unsigned long now_us = micros();
     unsigned long now_ms = millis();
+    pumpEvents(can_intf); // This is required on some platforms to handle incoming feedback CAN messages
 
     // ── Fast control loop (1 kHz) ────────────────────────────────
     float dt = (now_us - last_control_us) / 1e6f;
@@ -203,13 +383,13 @@ void loop() {
         switch (fw_state) {
             case STATE_NORMAL:
                 set_wheel_motor(cmd_wheel_velocity);
-                run_actuator_pid(dt);
+                run_actuator_pid(dt); // todo christian's code might change this, update when we get it
                 break;
 
             case STATE_EMERGENCY_GRIP:
                 set_wheel_motor(0.0f);  // stop wheels
                 cmd_actuator_setpoint = EMERGENCY_GRIP;
-                run_actuator_pid(dt);
+                run_actuator_pid(dt); // todo above
                 break;
 
             case STATE_FAULT:
@@ -249,12 +429,12 @@ void loop() {
 // ═══════════════════════════════════════════════════════════════════
 
 void setup_micro_ros() {
-    set_microros_transports();
+    set_microros_serial_transports(Serial);
 
     allocator = rcl_get_default_allocator();
     rclc_support_init(&support, 0, NULL, &allocator);
 
-    // Node name: mcu_ne, mcu_nw, mcu_sw, mcu_se
+    // Node name: mcu_n, mcu_w, mcu_s, mcu_e
     char node_name[16];
     snprintf(node_name, sizeof(node_name), "mcu_%s", ARM_NAME);
     rclc_node_init_default(&node, node_name, "", &support);
@@ -276,7 +456,7 @@ void setup_micro_ros() {
         cmd_topic);
 
     // Executor with 1 subscription
-    rclc_executor_init(&executor, &support.context, 1, &allocator);
+    rclc_executor_init(&executor, &support.context, 2, &allocator);
     rclc_executor_add_subscription(&executor, &cmd_sub, &cmd_msg,
         &cmd_callback, ON_NEW_DATA);
 
@@ -292,21 +472,86 @@ void setup_micro_ros() {
 
 void setup_hardware() {
     // Wheel motor
-    pinMode(PIN_WHEEL_PWM, OUTPUT);
-    pinMode(PIN_WHEEL_DIR, OUTPUT);
-    pinMode(PIN_WHEEL_ENC_A, INPUT_PULLUP);
-    pinMode(PIN_WHEEL_ENC_B, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(PIN_WHEEL_ENC_A), encoder_isr, RISING);
 
     // Actuator motor
-    pinMode(PIN_ACT_PWM, OUTPUT);
-    pinMode(PIN_ACT_DIR, OUTPUT);
+    // pinMode(PIN_ACT_PWM, OUTPUT);
+    // pinMode(PIN_ACT_DIR, OUTPUT);
     pinMode(PIN_ACT_LIMIT_IN, INPUT_PULLUP);
     pinMode(PIN_ACT_LIMIT_OUT, INPUT_PULLUP);
 
     // I2C for ToF sensors
-    // Wire.begin(PIN_SDA, PIN_SCL);
-    // TODO: Initialize VL53L0X/VL53L1X sensors with XSHUT multiplexing
+    Wire.begin(PIN_SDA, PIN_SCL);
+    setup_tof_sensors();
+}
+
+void tca_select(uint8_t channel) {
+    if (channel > 7) {
+        return;
+    }
+    Wire.beginTransmission(TCAADDR);
+    Wire.write(1 << channel);
+    Wire.endTransmission();
+}
+
+void setup_tof_sensors() {
+    for (uint8_t i = 0; i < NUM_TOF_SENSORS; i++) {
+        tca_select(i);
+        tof_sensor_ok[i] = tof_sensors[i].begin(0x29, false, &Wire);
+    }
+}
+
+void initialize_actuator_motion() {
+    RoboSerial.begin(ROBO_BAUDRATE, SERIAL_8N1, PIN_ROBO_RX, PIN_ROBO_TX);
+
+    bool ok = roboclaw.ReadM1PositionPID(
+        ROBOCLAW_ADDR,
+        rc_kp,
+        rc_ki,
+        rc_kd,
+        rc_ki_max,
+        rc_deadzone,
+        rc_pos_min,
+        rc_pos_max);
+
+    if (!ok) {
+        // Fallback to compile-time gains if controller gains are unavailable.
+        rc_kp = KP_ACTUATOR;
+        rc_ki = KI_ACTUATOR;
+        rc_kd = KD_ACTUATOR;
+        rc_ki_max = 5000;
+        rc_deadzone = 1;
+    } else {
+        if (rc_deadzone == 0) {
+            rc_deadzone = 1;
+        }
+        rc_kp = rc_kp * 0.13f;
+        rc_ki = rc_ki * 0.01f;
+        rc_kd = 0.0f;
+    }
+
+    // Home to the retract limit, then set zero from first switch release.
+    unsigned long start_ms = millis();
+    while (digitalRead(PIN_ACT_LIMIT_IN) != LOW && (millis() - start_ms) < 5000) {
+        roboclaw.BackwardM1(ROBOCLAW_ADDR, 50);
+        delay(2);
+    }
+    roboclaw.BackwardM1(ROBOCLAW_ADDR, 0);
+
+    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW) {
+        roboclaw.ResetEncoders(ROBOCLAW_ADDR);
+        start_ms = millis();
+        while (digitalRead(PIN_ACT_LIMIT_IN) == LOW && (millis() - start_ms) < 3000) {
+            roboclaw.ForwardM1(ROBOCLAW_ADDR, 75);
+            delay(2);
+        }
+        roboclaw.ForwardM1(ROBOCLAW_ADDR, 0);
+
+        uint8_t status;
+        bool valid;
+        int32_t enc = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
+        actuator_home_ticks = valid ? enc : 0;
+        actuator_ready = true;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -314,10 +559,21 @@ void setup_hardware() {
 // ═══════════════════════════════════════════════════════════════════
 
 void read_tof_sensors() {
-    // TODO: Read VL53L0X/VL53L1X array
-    // Convert mm readings to metres and store in tof_distances[]
-    for (int i = 0; i < NUM_TOF_SENSORS; i++) {
-        tof_distances[i] = 0.010f;  // placeholder 10mm
+    VL53L0X_RangingMeasurementData_t measure;
+    for (uint8_t i = 0; i < NUM_TOF_SENSORS; i++) {
+        if (!tof_sensor_ok[i]) {
+            tof_distances[i] = 10.0f;
+            continue;
+        }
+
+        tca_select(i);
+        tof_sensors[i].rangingTest(&measure, false);
+
+        if (measure.RangeStatus != 4) {
+            tof_distances[i] = (float)measure.RangeMilliMeter / 1000.0f;
+        } else {
+            tof_distances[i] = 10.0f;
+        }
     }
 }
 
@@ -328,46 +584,153 @@ void read_wheel_encoder() {
 
     long count = encoder_count;
     float dt = (now - prev_time_us) / 1e6f;
-    if (dt > 0.0f) {
-        float delta_rad = ((float)(count - prev_count) / ENCODER_TICKS_PER_REV) * 2.0f * PI;
-        wheel_velocity = delta_rad / dt;
-        wheel_position += delta_rad;
+    if (odrv0_user_data.received_feedback) {
+    Get_Encoder_Estimates_msg_t feedback = odrv0_user_data.last_feedback;
+    odrv0_user_data.received_feedback = false;
+    // Update wheel position and velocity from ODrive feedback
+    wheel_position = feedback.Pos_Estimate * TWO_PI_F; // Convert revolutions to radians
+    wheel_velocity = feedback.Vel_Estimate * TWO_PI_F; // Convert rev/s to rad/s; 
     }
+    // if (dt > 0.0f) {
+    //     float delta_rad = ((float)(count - prev_count) / ENCODER_TICKS_PER_REV) * 2.0f * PI;
+    //     // wheel_velocity = delta_rad / dt;
+    //     // wheel_position += delta_rad;
+    // }
+
     prev_count = count;
     prev_time_us = now;
 }
 
 void read_actuator_position_sensor() {
-    // TODO: Read actuator position from a linear potentiometer, string pot,
-    //       or second encoder. For now, use a simple integrator placeholder.
-    // actuator_position = analogRead(PIN_ACT_POS) * scale + offset;
+    if (!actuator_ready) {
+        actuator_position = 0.0f;
+        actuator_velocity = 0.0f;
+        return;
+    }
+
+    static int32_t prev_ticks = 0;
+    static unsigned long prev_us = 0;
+
+    uint8_t status;
+    bool valid;
+    int32_t enc = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
+    if (!valid) {
+        return;
+    }
+
+    int32_t rel_ticks = enc - actuator_home_ticks;
+    actuator_position = ticks_to_meters(rel_ticks);
+
+    unsigned long now_us = micros();
+    if (prev_us != 0) {
+        float dt = (now_us - prev_us) / 1e6f;
+        if (dt > 0.0f) {
+            actuator_velocity = ticks_to_meters(rel_ticks - prev_ticks) / dt;
+        }
+    }
+    prev_ticks = rel_ticks;
+    prev_us = now_us;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  Actuator PID controller
 // ═══════════════════════════════════════════════════════════════════
 
+
+
+//todo: may not be needed due to christians code, update when we get it.
 void run_actuator_pid(float dt) {
-    float error = cmd_actuator_setpoint - actuator_position;
-
-    pid_integral += error * dt;
-    pid_integral = constrain(pid_integral, -0.1f, 0.1f);  // anti-windup
-
-    float derivative = (dt > 0.0f) ? (error - pid_prev_error) / dt : 0.0f;
-    pid_prev_error = error;
-
-    float output = KP_ACTUATOR * error + KI_ACTUATOR * pid_integral + KD_ACTUATOR * derivative;
-    output = constrain(output, -1.0f, 1.0f);
-
-    // Respect limit switches
-    if (output < 0 && digitalRead(PIN_ACT_LIMIT_IN) == LOW) {
-        output = 0.0f;  // can't go further in
-    }
-    if (output > 0 && digitalRead(PIN_ACT_LIMIT_OUT) == LOW) {
-        output = 0.0f;  // can't go further out
+    (void)dt;
+    if (!actuator_ready) {
+        set_actuator_motor(0.0f);
+        return;
     }
 
-    set_actuator_motor(output);
+    uint8_t status;
+    bool valid;
+    int32_t enc = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
+    if (!valid) {
+        return;
+    }
+
+    int32_t desired_ticks = actuator_home_ticks + meters_to_ticks(cmd_actuator_setpoint);
+    if (!actuator_pid_active || desired_ticks != actuator_target_ticks) {
+        move_actuator_relative_ticks(desired_ticks - enc);
+    }
+
+    update_actuator_pid();
+}
+
+int32_t meters_to_ticks(float metres) {
+    return (int32_t)lroundf((ACTUATOR_PPR / ACTUATOR_M_PER_REV) * metres);
+}
+
+float ticks_to_meters(int32_t ticks) {
+    return ((float)ticks * ACTUATOR_M_PER_REV) / ACTUATOR_PPR;
+}
+
+void move_actuator_relative_ticks(int32_t delta_ticks) {
+    uint8_t status;
+    bool valid;
+    int32_t current = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
+    if (!valid) {
+        actuator_pid_active = false;
+        return;
+    }
+
+    actuator_target_ticks = current + delta_ticks;
+    actuator_pid_integral = 0.0f;
+    actuator_last_error = 0;
+    actuator_last_time_ms = millis();
+    actuator_pid_active = true;
+}
+
+void update_actuator_pid() {
+    if (!actuator_pid_active) {
+        return;
+    }
+
+    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW || digitalRead(PIN_ACT_LIMIT_OUT) == LOW) {
+        roboclaw.SpeedM1(ROBOCLAW_ADDR, 0);
+        actuator_pid_active = false;
+        actuator_pid_integral = 0.0f;
+        return;
+    }
+
+    uint8_t status;
+    bool valid;
+    int32_t current = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
+    if (!valid) {
+        return;
+    }
+
+    uint32_t now = millis();
+    float dt = (now - actuator_last_time_ms) / 1000.0f;
+    if (dt < 0.001f) {
+        return;
+    }
+    actuator_last_time_ms = now;
+
+    int32_t error = actuator_target_ticks - current;
+    actuator_pid_integral += error * dt;
+    actuator_pid_integral = constrain(actuator_pid_integral, -(float)rc_ki_max, (float)rc_ki_max);
+
+    float derivative = (float)(error - actuator_last_error) / dt;
+    actuator_last_error = error;
+
+    float output = (rc_kp * error) + (rc_ki * actuator_pid_integral) + (rc_kd * derivative);
+
+    if (abs(error) <= (int32_t)rc_deadzone) {
+        int32_t hold_speed = (int32_t)constrain(output, -(float)ROBO_MIN_SPEED, (float)ROBO_MIN_SPEED);
+        roboclaw.SpeedM1(ROBOCLAW_ADDR, hold_speed);
+        return;
+    }
+
+    int32_t speed = (int32_t)constrain(output, -(float)ROBO_MAX_SPEED, (float)ROBO_MAX_SPEED);
+    if (speed > 0 && speed < ROBO_MIN_SPEED) speed = ROBO_MIN_SPEED;
+    if (speed < 0 && speed > -ROBO_MIN_SPEED) speed = -ROBO_MIN_SPEED;
+
+    roboclaw.SpeedM1(ROBOCLAW_ADDR, speed);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -375,18 +738,14 @@ void run_actuator_pid(float dt) {
 // ═══════════════════════════════════════════════════════════════════
 
 void set_wheel_motor(float velocity_cmd) {
-    // TODO: Implement wheel velocity PID or open-loop PWM
-    // For now, simple proportional mapping:
-    int pwm = constrain((int)(velocity_cmd * 25.5f), -255, 255);
-    digitalWrite(PIN_WHEEL_DIR, pwm >= 0 ? HIGH : LOW);
-    analogWrite(PIN_WHEEL_PWM, abs(pwm));
+odrv0.setVelocity(velocity_cmd); // Set velocity for axis 0 (adjust if using multiple axes)
+
 }
 
 void set_actuator_motor(float output) {
-    // output: -1.0 (retract/grip) to +1.0 (extend/release)
-    int pwm = constrain((int)(output * 255.0f), -255, 255);
-    digitalWrite(PIN_ACT_DIR, pwm >= 0 ? HIGH : LOW);
-    analogWrite(PIN_ACT_PWM, abs(pwm));
+    int32_t speed = (int32_t)constrain((int32_t)(output * (float)ROBO_MAX_SPEED),
+        -ROBO_MAX_SPEED, ROBO_MAX_SPEED);
+    roboclaw.SpeedM1(ROBOCLAW_ADDR, speed);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -420,8 +779,9 @@ void cmd_callback(const void* msg_in) {
 
         case 3:  // CLEAR_FAULT
             if (fw_state == STATE_FAULT) {
-                pid_integral = 0.0f;
-                pid_prev_error = 0.0f;
+                actuator_pid_integral = 0.0f;
+                actuator_last_error = 0;
+                actuator_pid_active = false;
                 fw_state = STATE_IDLE;
             }
             break;
@@ -448,8 +808,9 @@ void check_safety() {
         for (int i = 1; i < NUM_TOF_SENSORS; i++) {
             if (tof_distances[i] < min_tof) min_tof = tof_distances[i];
         }
-        // If all sensors read > 50mm, we've likely lost the surface
-        if (min_tof > 0.05f) {
+        // If all sensors read > 200mm, we've likely lost the surface
+        // (Threshold increased to 0.20f because actuator max release is 0.15m)
+        if (min_tof > 0.20f) {
             fw_state = STATE_EMERGENCY_GRIP;
         }
     }
