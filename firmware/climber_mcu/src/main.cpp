@@ -127,7 +127,7 @@ void onCanMessage(const CanMsg& msg) {
 // ═══════════════════════════════════════════════════════════════════
 
 #ifndef ARM_ID
-#define ARM_ID 0  // 0=N, 1=W, 2=S, 3=E
+#define ARM_ID 1  // 0=N, 1=W, 2=S, 3=E
 #endif
 
 static const char* ARM_NAMES[] = {"n", "w", "s", "e"};
@@ -156,16 +156,29 @@ static const char* ARM_NAME = ARM_NAMES[ARM_ID];
 #define EMERGENCY_GRIP   -0.008f  // clamp position on fault
 
 // PID gains for actuator position control (tune these!)
-#define KP_ACTUATOR  500.0f
-#define KI_ACTUATOR  10.0f
-#define KD_ACTUATOR  5.0f
+#define KP_ACTUATOR  7.17f
+#define KI_ACTUATOR  0.09f
+#define KD_ACTUATOR  0.00f
 
+/*
+output from controller, reusing gains on all roboclaws
+PID gains loaded:
+  KP: 55.15
+  KI: 9.39
+  KD: 269.99
+  KiMax: 0
+  DeadZone: 1
+Scaled gains (x0.1):
+  KP: 7.17
+  KI: 0.09
+  KD: 0.00
+*/
 //helper
 static constexpr float PI_F = 3.14159265358979323846f;
 static constexpr float TWO_PI_F = 2.0f * PI_F;
 
 // ═══════════════════════════════════════════════════════════════════
-//  Pin definitions change me when i get christians code
+//  Pin definitions
 // ═══════════════════════════════════════════════════════════════════
 
 
@@ -311,13 +324,13 @@ static inline void blink_setup_led(uint8_t pulses = 1, uint16_t on_ms = 80, uint
 
 void setup() {
     // Serial.begin(115200);
-
+    // delay(7000);
     blink_setup_led();
 
     setup_hardware();
     blink_setup_led();
-    //initialize_actuator_motion();
-    // blink_setup_led();
+    // initialize_actuator_motion(); // TEMPORARILY DISABLED: Blocks for 5s without roboclaw
+    blink_setup_led();
     setup_micro_ros();
     blink_setup_led(2);
       // Register callbacks for the heartbeat and encoder feedback messages
@@ -332,7 +345,7 @@ void setup() {
     if (!setupCan()) {
      // Serial.println("CAN failed to initialize: reset required");
         blink_setup_led(3, 150, 150);
-        while (true); // spin indefinitely
+        // while (true); // spin indefinitely
   }
 
   // Serial.println("Waiting for ODrive...");
@@ -405,7 +418,7 @@ void loop() {
         }
 
         // Safety checks
-        check_safety();
+        //check_safety();
     }
 
     // ── ToF sensor read (100 Hz) ─────────────────────────────────
@@ -479,6 +492,15 @@ void setup_hardware() {
     pinMode(PIN_ACT_LIMIT_IN, INPUT_PULLUP);
     pinMode(PIN_ACT_LIMIT_OUT, INPUT_PULLUP);
 
+    // Boot ToF sensors by setting XSHUT pins HIGH
+    pinMode(PIN_TOF_XSHUT_0, OUTPUT);
+    pinMode(PIN_TOF_XSHUT_1, OUTPUT);
+    pinMode(PIN_TOF_XSHUT_2, OUTPUT);
+    digitalWrite(PIN_TOF_XSHUT_0, HIGH);
+    digitalWrite(PIN_TOF_XSHUT_1, HIGH);
+    digitalWrite(PIN_TOF_XSHUT_2, HIGH);
+    delay(10); // Wait for sensors to boot up
+
     // I2C for ToF sensors
     Wire.begin(PIN_SDA, PIN_SCL);
     setup_tof_sensors();
@@ -495,13 +517,14 @@ void tca_select(uint8_t channel) {
 
 void setup_tof_sensors() {
     for (uint8_t i = 0; i < NUM_TOF_SENSORS; i++) {
-        tca_select(i);
+        tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
         tof_sensor_ok[i] = tof_sensors[i].begin(0x29, false, &Wire);
     }
 }
 
 void initialize_actuator_motion() {
     RoboSerial.begin(ROBO_BAUDRATE, SERIAL_8N1, PIN_ROBO_RX, PIN_ROBO_TX);
+    // roboclaw.ReadMainBatteryVoltage(ROBOCLAW_ADDR, &valid);
 
     bool ok = roboclaw.ReadM1PositionPID(
         ROBOCLAW_ADDR,
@@ -512,6 +535,8 @@ void initialize_actuator_motion() {
         rc_deadzone,
         rc_pos_min,
         rc_pos_max);
+
+
 
     if (!ok) {
         // Fallback to compile-time gains if controller gains are unavailable.
@@ -524,9 +549,9 @@ void initialize_actuator_motion() {
         if (rc_deadzone == 0) {
             rc_deadzone = 1;
         }
-        rc_kp = rc_kp * 0.13f;
-        rc_ki = rc_ki * 0.01f;
-        rc_kd = 0.0f;
+        rc_kp = KP_ACTUATOR; // Scale down for position control
+        rc_ki = KI_ACTUATOR;
+        rc_kd = KD_ACTUATOR;
     }
 
     // Home to the retract limit, then set zero from first switch release.
@@ -562,17 +587,18 @@ void read_tof_sensors() {
     VL53L0X_RangingMeasurementData_t measure;
     for (uint8_t i = 0; i < NUM_TOF_SENSORS; i++) {
         if (!tof_sensor_ok[i]) {
-            tof_distances[i] = 10.0f;
+            tof_distances[i] = -10.0f - (float)i; // Init failed (-10 to -14)
             continue;
         }
 
-        tca_select(i);
+        tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
+
         tof_sensors[i].rangingTest(&measure, false);
 
         if (measure.RangeStatus != 4) {
             tof_distances[i] = (float)measure.RangeMilliMeter / 1000.0f;
         } else {
-            tof_distances[i] = 10.0f;
+            tof_distances[i] = -20.0f - (float)i; // Out of range/error (-20 to -24)
         }
     }
 }
@@ -677,7 +703,6 @@ void move_actuator_relative_ticks(int32_t delta_ticks) {
         actuator_pid_active = false;
         return;
     }
-
     actuator_target_ticks = current + delta_ticks;
     actuator_pid_integral = 0.0f;
     actuator_last_error = 0;
@@ -690,9 +715,10 @@ void update_actuator_pid() {
         return;
     }
 
-    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW || digitalRead(PIN_ACT_LIMIT_OUT) == LOW) {
+    if (digitalRead(PIN_ACT_LIMIT_IN) != LOW || digitalRead(PIN_ACT_LIMIT_OUT) != LOW) {
         roboclaw.SpeedM1(ROBOCLAW_ADDR, 0);
         actuator_pid_active = false;
+        blink_setup_led();
         actuator_pid_integral = 0.0f;
         return;
     }
@@ -738,7 +764,7 @@ void update_actuator_pid() {
 // ═══════════════════════════════════════════════════════════════════
 
 void set_wheel_motor(float velocity_cmd) {
-odrv0.setVelocity(velocity_cmd); // Set velocity for axis 0 (adjust if using multiple axes)
+odrv0.setVelocity(velocity_cmd); // Set velocity for axis 0 
 
 }
 
@@ -811,7 +837,8 @@ void check_safety() {
         // If all sensors read > 200mm, we've likely lost the surface
         // (Threshold increased to 0.20f because actuator max release is 0.15m)
         if (min_tof > 0.20f) {
-            fw_state = STATE_EMERGENCY_GRIP;
+            // Uncomment below to re-enable ToF safety retraction
+            // fw_state = STATE_EMERGENCY_GRIP; 
         }
     }
 }
