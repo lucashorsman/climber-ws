@@ -73,14 +73,7 @@ Global decision-making in ROS 2 with fast local safety loops on each MCU.
                      │  State machine + grip manager   │
                      │  Reads: 4x /mcu_*/arm_state     │
                      │  Publishes: /climber_state       │
-                     └──────┬───────┬───────┬───────┬──┘
-                            │       │       │       │
-                  ┌─────────▼──┐ ┌──▼──┐ ┌──▼──┐ ┌──▼─────────┐
-                  │ velocity_  │ │     │ │     │ │ position_   │
-                  │ controller │ │     │ │     │ │ controller  │
-                  └─────┬──────┘ │     │ │     │ └──────┬──────┘
-                        └────────┴──┬──┴─┴──┬──┘        │
-                                    │       │           │
+                     |----------------------------------|
                      ┌──────────────▼───────▼───────────▼──┐
                      │     ClimberHardwareInterface         │
                      │  (ros2_control SystemInterface)      │
@@ -90,11 +83,17 @@ Global decision-making in ROS 2 with fast local safety loops on each MCU.
                      └──────┬───────┬───────┬───────┬──────┘
                             │       │       │       │  micro-ROS
                        ┌────▼┐ ┌────▼┐ ┌────▼┐ ┌────▼┐
-                       │ N  │ │ W  │ │ S  │ │ E  │  MCUs
+                       │ N   │ │ W   │ │ S   │ │ E   │  MCUs
                        │ PID │ │ PID │ │ PID │ │ PID │  (ESP32)
                        │ ToF │ │ ToF │ │ ToF │ │ ToF │
                        │safe │ │safe │ │safe │ │safe │
-                       └─────┘ └─────┘ └─────┘ └─────┘
+                       └─────┘ └─────┘ └─────┘ └─────┘     
+                  ┌─────────▼──┐ ┌──▼──┐ ┌──▼──┐ ┌──▼─────────┐
+                  │ velocity_  │ │     │ │     │ │ position_   │
+                  │ controller │ │     │ │     │ │ controller  │
+                  └─────┬──────┘ │     │ │     │ └──────┬──────┘
+                        └────────┴──┬──┴─┴──┬──┘        │
+              
 ```
 
 ### Data Flow
@@ -312,21 +311,6 @@ INIT → IDLE → NORMAL ←→ EMERGENCY_GRIP
 - **Limit switches**: Actuator PID respects physical limit switches at both ends of travel.
 - **FAULT latch**: Once in FAULT, MCU holds position until ROS 2 sends explicit CLEAR_FAULT.
 
-### Pin Mapping
-
-| Function | GPIO | Notes |
-|----------|------|-------|
-| Wheel PWM | 25 | H-bridge speed |
-| Wheel DIR | 26 | H-bridge direction |
-| Wheel Enc A | 34 | Quadrature A (ISR) |
-| Wheel Enc B | 35 | Quadrature B |
-| Actuator PWM | 27 | Linear actuator |
-| Actuator DIR | 14 | Actuator direction |
-| Limit IN | 32 | Fully retracted switch |
-| Limit OUT | 33 | Fully extended switch |
-| I2C SDA | 21 | ToF sensor array |
-| I2C SCL | 22 | ToF sensor array |
-| XSHUT 0–2 | 4, 16, 17 | Individual ToF enable |
 
 ### Building
 

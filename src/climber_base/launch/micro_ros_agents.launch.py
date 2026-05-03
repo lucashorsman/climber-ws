@@ -15,8 +15,8 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # arms = ['n', 'w', 's', 'e']
-    arms = ['n']
+    arms = ['n', 'w', 's', 'e']
+    # arms = ['n']
 
     declared_arguments = []
     agent_nodes = []
@@ -27,7 +27,7 @@ def generate_launch_description():
         declared_arguments.append(
             DeclareLaunchArgument(
                 arg_name,
-                default_value=f'/dev/ttyACM0',
+                default_value=f'/dev/climber_{arm}',
                 description=f'Serial device for {arm.upper()} MCU'
             )
         )
@@ -37,7 +37,7 @@ def generate_launch_description():
         declared_arguments.append(
             DeclareLaunchArgument(
                 baud_arg,
-                default_value='921600',
+                default_value='115200',
                 description=f'Baud rate for {arm.upper()} MCU serial link'
             )
         )
