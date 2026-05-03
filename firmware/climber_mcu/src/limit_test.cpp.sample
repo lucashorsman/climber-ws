@@ -1,0 +1,42 @@
+#include <Arduino.h>
+
+// Update these pins to match your physical wiring if needed
+// D5 is used for fully retracted limit (IN)
+// D4 is used for fully extended limit (OUT)
+#define PIN_ACT_LIMIT_IN  D5  
+#define PIN_ACT_LIMIT_OUT D4  
+
+void setup() {
+    Serial.begin(115200);
+    delay(2000); // Give serial monitor time to open
+    Serial.println("Starting Limit Switch Diagnostic...");
+
+    // Configure pins with pullups
+    // Unpressed = HIGH (1)
+    // Pressed = LOW (0)
+    pinMode(PIN_ACT_LIMIT_IN, INPUT_PULLUP);
+    pinMode(PIN_ACT_LIMIT_OUT, INPUT_PULLUP);
+}
+
+void loop() {
+    // Read the pins
+    int state_in = digitalRead(PIN_ACT_LIMIT_IN);
+    int state_out = digitalRead(PIN_ACT_LIMIT_OUT);
+
+    Serial.print("Limit In (Retract) [D5]: ");
+    if (state_in == LOW) {
+        Serial.print("PRESSED ");
+    } else {
+        Serial.print("OPEN    ");
+    }
+
+    Serial.print("  |  Limit Out (Extend) [D4]: ");
+    if (state_out == LOW) {
+        Serial.println("PRESSED");
+    } else {
+        Serial.println("OPEN");
+    }
+
+    // Refresh rate of 10Hz
+    delay(100);
+}

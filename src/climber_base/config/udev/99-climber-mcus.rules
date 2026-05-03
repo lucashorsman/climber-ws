@@ -15,8 +15,8 @@
 #   4. Verify:
 #        ls -la /dev/climber_*
 
-# Northeast MCU
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{serial}=="PLACEHOLDER_SERIAL_NE", SYMLINK+="climber_ne", MODE="0666"
+# North MCU
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{serial}=="48CA432E0E4C", SYMLINK+="climber_n", MODE="0666"
 
 # Northwest MCU
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{serial}=="PLACEHOLDER_SERIAL_NW", SYMLINK+="climber_nw", MODE="0666"

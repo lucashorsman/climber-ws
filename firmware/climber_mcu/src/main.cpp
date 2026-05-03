@@ -38,8 +38,10 @@
 #include "ODriveESP32TWAI.hpp"
 
 // Pins used to connect to CAN bus transceiver
-#define ESP32_TWAI_TX_PIN 17 // these are actually d8 
-#define ESP32_TWAI_RX_PIN 18 //d9
+//d8 = 17
+//d9 =18
+#define ESP32_TWAI_TX_PIN 18 // these are actually d8  d8 is tx, d9 is rx for north
+#define ESP32_TWAI_RX_PIN 17 //d9
 
 ESP32TWAIIntf can_intf;
 
@@ -127,16 +129,16 @@ void onCanMessage(const CanMsg& msg) {
 // ═══════════════════════════════════════════════════════════════════
 
 #ifndef ARM_ID
-#define ARM_ID 1  // 0=N, 1=W, 2=S, 3=E
+#define ARM_ID 0  // 0=N, 1=W, 2=S, 3=E
 #endif
 
 static const char* ARM_NAMES[] = {"n", "w", "s", "e"};
 static const char* ARM_NAME = ARM_NAMES[ARM_ID];
 
 // Timing
-#define CONTROL_LOOP_HZ   1000
+#define CONTROL_LOOP_HZ   50
 #define STATE_PUBLISH_HZ  50
-#define TOF_READ_HZ       100
+#define TOF_READ_HZ       50
 #define COMMS_TIMEOUT_MS  200
 
 // TCA9548A I2C multiplexer
@@ -185,14 +187,17 @@ static constexpr float TWO_PI_F = 2.0f * PI_F;
 // Linear actuator motor
 // #define PIN_ACT_PWM       D6
 // #define PIN_ACT_DIR       D11
-#define PIN_ACT_LIMIT_IN  D3  // limit switch — fully retracted
-#define PIN_ACT_LIMIT_OUT D2   // limit switch — fully extended
+#define PIN_ACT_LIMIT_IN  D5  // limit switch — fully retracted
+#define PIN_ACT_LIMIT_OUT D3   // limit switch — fully extended
 
 // RoboClaw UART
-#define PIN_ROBO_RX       D6 // maybe swap
-#define PIN_ROBO_TX       D7 
-#define ESP32_TWAI_TX_PIN 17
-#define ESP32_TWAI_RX_PIN 18
+#define PIN_ROBO_RX       D7 // maybe swap //on N arm, use D7 as RX and D6 as TX
+#define PIN_ROBO_TX       D6 // on N arm D6 goes to S2, same for W
+//for east, rx=d7, tx=d6
+//for north, rx=d7, tx=d6
+//for south, rx=d7, tx = d6
+//
+
 // ToF sensor array (I2C)
 #define PIN_SDA           A4 //used for imu and the muxer
 #define PIN_SCL           A5
@@ -200,7 +205,7 @@ static constexpr float TWO_PI_F = 2.0f * PI_F;
 #define PIN_TOF_XSHUT_1   A1
 #define PIN_TOF_XSHUT_2   A2
 
-#define NUM_TOF_SENSORS   5
+#define NUM_TOF_SENSORS   1
 
 // ═══════════════════════════════════════════════════════════════════
 //  Global state
@@ -228,7 +233,7 @@ static Adafruit_VL53L0X tof_sensors[NUM_TOF_SENSORS];
 static bool tof_sensor_ok[NUM_TOF_SENSORS] = {false};
 
 HardwareSerial RoboSerial(1);
-RoboClaw roboclaw(&RoboSerial, 10000);
+RoboClaw roboclaw(&RoboSerial, 50); // Changed timeout from 10000 to 50ms
 
 // RoboClaw PID gains loaded from controller
 static float rc_kp = 0.0f;
@@ -247,6 +252,7 @@ static int32_t actuator_target_ticks = 0;
 static int32_t actuator_home_ticks = 0;
 static bool actuator_pid_active = false;
 static bool actuator_ready = false;
+static int32_t current_actuator_ticks = 0; // Cache the ticks per loop
 
 // Commands from ROS 2
 static volatile float cmd_actuator_setpoint = 0.0f;
@@ -325,14 +331,14 @@ static inline void blink_setup_led(uint8_t pulses = 1, uint16_t on_ms = 80, uint
 void setup() {
     // Serial.begin(115200);
     // delay(7000);
-    blink_setup_led();
-
+    
     setup_hardware();
     blink_setup_led();
-    // initialize_actuator_motion(); // TEMPORARILY DISABLED: Blocks for 5s without roboclaw
-    blink_setup_led();
+    // blink_setup_led();
+    initialize_actuator_motion(); // TEMPORARILY DISABLED: Blocks for 5s without roboclaw
+    // blink_setup_led();
     setup_micro_ros();
-    blink_setup_led(2);
+    // blink_setup_led(2);
       // Register callbacks for the heartbeat and encoder feedback messages
       fw_state = STATE_IDLE;
       last_control_us = micros();
@@ -344,11 +350,11 @@ void setup() {
     odrv0.onStatus(onHeartbeat, &odrv0_user_data);
     if (!setupCan()) {
      // Serial.println("CAN failed to initialize: reset required");
-        blink_setup_led(3, 150, 150);
-        // while (true); // spin indefinitely
+        // blink_setup_led(3, 500, 150);
+        while (true); // spin indefinitely
   }
 
-  // Serial.println("Waiting for ODrive...");
+//   // Serial.println("Waiting for ODrive...");
 //   while (!odrv0_user_data.received_heartbeat) {
 //     blink_setup_led(1, 100, 100);
 //     pumpEvents(can_intf);
@@ -363,14 +369,14 @@ void setup() {
     // 1. If there is an error condition, such as missing DC power, the ODrive might
     //    briefly attempt to enter CLOSED_LOOP_CONTROL state, so we can't rely
     //    on the first heartbeat response, so we want to receive at least two
-    //    heartbeats (100ms default interval).
+    //    heartbeats (100 ms default interval).
     // 2. If the bus is congested, the setState command won't get through
     //    immediately but can be delayed.
     for (int i = 0; i < 15; ++i) {
       delay(10);
       pumpEvents(can_intf);
     }
-    break;
+    // break;
   }
 }
 
@@ -492,13 +498,13 @@ void setup_hardware() {
     pinMode(PIN_ACT_LIMIT_IN, INPUT_PULLUP);
     pinMode(PIN_ACT_LIMIT_OUT, INPUT_PULLUP);
 
-    // Boot ToF sensors by setting XSHUT pins HIGH
-    pinMode(PIN_TOF_XSHUT_0, OUTPUT);
-    pinMode(PIN_TOF_XSHUT_1, OUTPUT);
-    pinMode(PIN_TOF_XSHUT_2, OUTPUT);
-    digitalWrite(PIN_TOF_XSHUT_0, HIGH);
-    digitalWrite(PIN_TOF_XSHUT_1, HIGH);
-    digitalWrite(PIN_TOF_XSHUT_2, HIGH);
+    // // Boot ToF sensors by setting XSHUT pins HIGH
+    // pinMode(PIN_TOF_XSHUT_0, OUTPUT);
+    // pinMode(PIN_TOF_XSHUT_1, OUTPUT);
+    // pinMode(PIN_TOF_XSHUT_2, OUTPUT);
+    // digitalWrite(PIN_TOF_XSHUT_0, HIGH);
+    // digitalWrite(PIN_TOF_XSHUT_1, HIGH);
+    // digitalWrite(PIN_TOF_XSHUT_2, HIGH);
     delay(10); // Wait for sensors to boot up
 
     // I2C for ToF sensors
@@ -517,7 +523,8 @@ void tca_select(uint8_t channel) {
 
 void setup_tof_sensors() {
     for (uint8_t i = 0; i < NUM_TOF_SENSORS; i++) {
-        tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
+        // tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
+        tca_select(2);
         tof_sensor_ok[i] = tof_sensors[i].begin(0x29, false, &Wire);
     }
 }
@@ -525,16 +532,16 @@ void setup_tof_sensors() {
 void initialize_actuator_motion() {
     RoboSerial.begin(ROBO_BAUDRATE, SERIAL_8N1, PIN_ROBO_RX, PIN_ROBO_TX);
     // roboclaw.ReadMainBatteryVoltage(ROBOCLAW_ADDR, &valid);
-
-    bool ok = roboclaw.ReadM1PositionPID(
-        ROBOCLAW_ADDR,
-        rc_kp,
-        rc_ki,
-        rc_kd,
-        rc_ki_max,
-        rc_deadzone,
-        rc_pos_min,
-        rc_pos_max);
+    bool ok = false;
+    // bool ok = roboclaw.ReadM1PositionPID(
+    //     ROBOCLAW_ADDR,
+    //     rc_kp,
+    //     rc_ki,
+    //     rc_kd,
+    //     rc_ki_max,
+    //     rc_deadzone,
+    //     rc_pos_min,
+    //     rc_pos_max);
 
 
 
@@ -556,18 +563,28 @@ void initialize_actuator_motion() {
 
     // Home to the retract limit, then set zero from first switch release.
     unsigned long start_ms = millis();
+    // Serial.println("Homing: Moving DOWN...");
+    roboclaw.clear(); // Ensure serial buffer is clean
+    roboclaw.BackwardM1(ROBOCLAW_ADDR, 80);
+    
     while (digitalRead(PIN_ACT_LIMIT_IN) != LOW && (millis() - start_ms) < 5000) {
-        roboclaw.BackwardM1(ROBOCLAW_ADDR, 50);
         delay(2);
+        blink_setup_led();
     }
+    roboclaw.clear(); // Ensure serial buffer is clean
+    
+    // delay(500); // Pause briefly before writing stop
     roboclaw.BackwardM1(ROBOCLAW_ADDR, 0);
-
-    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW) {
+    delay(500); // Pause briefly before moving opposite direction
+roboclaw.clear(); // Ensure serial buffer is clean
+    
+    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW) {    
         roboclaw.ResetEncoders(ROBOCLAW_ADDR);
         start_ms = millis();
+        roboclaw.ForwardM1(ROBOCLAW_ADDR, 127); // Full power to break away from switch!
         while (digitalRead(PIN_ACT_LIMIT_IN) == LOW && (millis() - start_ms) < 3000) {
-            roboclaw.ForwardM1(ROBOCLAW_ADDR, 75);
             delay(2);
+            // roboclaw.clear(); // Ensure serial buffer is clean
         }
         roboclaw.ForwardM1(ROBOCLAW_ADDR, 0);
 
@@ -578,6 +595,7 @@ void initialize_actuator_motion() {
         actuator_ready = true;
     }
 }
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  Sensor reading stubs (implement for your hardware)
@@ -591,8 +609,9 @@ void read_tof_sensors() {
             continue;
         }
 
-        tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
+        // tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
 
+        tca_select(2);
         tof_sensors[i].rangingTest(&measure, false);
 
         if (measure.RangeStatus != 4) {
@@ -643,6 +662,8 @@ void read_actuator_position_sensor() {
     if (!valid) {
         return;
     }
+    
+    current_actuator_ticks = enc; // Save for PID use
 
     int32_t rel_ticks = enc - actuator_home_ticks;
     actuator_position = ticks_to_meters(rel_ticks);
@@ -672,12 +693,8 @@ void run_actuator_pid(float dt) {
         return;
     }
 
-    uint8_t status;
-    bool valid;
-    int32_t enc = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
-    if (!valid) {
-        return;
-    }
+    // Use cached ticks instead of re-reading
+    int32_t enc = current_actuator_ticks;
 
     int32_t desired_ticks = actuator_home_ticks + meters_to_ticks(cmd_actuator_setpoint);
     if (!actuator_pid_active || desired_ticks != actuator_target_ticks) {
@@ -696,13 +713,8 @@ float ticks_to_meters(int32_t ticks) {
 }
 
 void move_actuator_relative_ticks(int32_t delta_ticks) {
-    uint8_t status;
-    bool valid;
-    int32_t current = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
-    if (!valid) {
-        actuator_pid_active = false;
-        return;
-    }
+    int32_t current = current_actuator_ticks; // Use cached ticks
+
     actuator_target_ticks = current + delta_ticks;
     actuator_pid_integral = 0.0f;
     actuator_last_error = 0;
@@ -715,20 +727,7 @@ void update_actuator_pid() {
         return;
     }
 
-    if (digitalRead(PIN_ACT_LIMIT_IN) != LOW || digitalRead(PIN_ACT_LIMIT_OUT) != LOW) {
-        roboclaw.SpeedM1(ROBOCLAW_ADDR, 0);
-        actuator_pid_active = false;
-        blink_setup_led();
-        actuator_pid_integral = 0.0f;
-        return;
-    }
-
-    uint8_t status;
-    bool valid;
-    int32_t current = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
-    if (!valid) {
-        return;
-    }
+    int32_t current = current_actuator_ticks; // Use cached ticks
 
     uint32_t now = millis();
     float dt = (now - actuator_last_time_ms) / 1000.0f;
@@ -746,15 +745,36 @@ void update_actuator_pid() {
 
     float output = (rc_kp * error) + (rc_ki * actuator_pid_integral) + (rc_kd * derivative);
 
-    if (abs(error) <= (int32_t)rc_deadzone) {
-        int32_t hold_speed = (int32_t)constrain(output, -(float)ROBO_MIN_SPEED, (float)ROBO_MIN_SPEED);
-        roboclaw.SpeedM1(ROBOCLAW_ADDR, hold_speed);
-        return;
+    int32_t speed = 0;
+    // Introduce a static flag to keep track of if we are currently holding position
+    static bool is_holding = false;
+    
+    // Increased pseudo-deadzone so it doesn't endlessly hunt for 1 encoder tick
+    if (abs(error) <= (int32_t)rc_deadzone + 10) {
+        speed = 0; // Stop motor when very close to setpoint
+        is_holding = true;
+        actuator_pid_integral = 0.0f; // Clear integral so it doesn't accumulate
+    } else {
+        // If we were holding but error gets too large, start moving again
+        is_holding = false;
+        speed = (int32_t)constrain(output, -(float)ROBO_MAX_SPEED, (float)ROBO_MAX_SPEED);
+        // Only enforce MIN_SPEED if we are not supposed to be holding
+        if (speed > 0 && speed < ROBO_MIN_SPEED) speed = ROBO_MIN_SPEED;
+        if (speed < 0 && speed > -ROBO_MIN_SPEED) speed = -ROBO_MIN_SPEED;
     }
 
-    int32_t speed = (int32_t)constrain(output, -(float)ROBO_MAX_SPEED, (float)ROBO_MAX_SPEED);
-    if (speed > 0 && speed < ROBO_MIN_SPEED) speed = ROBO_MIN_SPEED;
-    if (speed < 0 && speed > -ROBO_MIN_SPEED) speed = -ROBO_MIN_SPEED;
+    // Apply limit switches to prevent movement in the direction of the triggered switch
+    // Assuming positive speed moves OUT and negative speed moves IN
+    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW && speed < 0) {
+        // blink_setup_led(3, 50, 50); // Rapid triple blink on limit switch hit
+        speed = 0;
+        actuator_pid_integral = 0.0f; // Prevent integral windup against limit
+    }
+    if (digitalRead(PIN_ACT_LIMIT_OUT) == LOW && speed > 0) {
+        // blink_setup_led(2, 50, 50); // Rapid triple blink on limit switch hit
+        speed = 0;
+        actuator_pid_integral = 0.0f; // Prevent integral windup against limit
+    }
 
     roboclaw.SpeedM1(ROBOCLAW_ADDR, speed);
 }
