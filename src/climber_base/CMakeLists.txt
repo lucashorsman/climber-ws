@@ -68,6 +68,7 @@ install(DIRECTORY src/
 
 install(PROGRAMS
   src/cylinder_climb_controller.py
+  src/actuator_keyboard_teleop.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
