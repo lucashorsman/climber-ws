@@ -332,12 +332,12 @@ void setup() {
     // Serial.begin(115200);
     // delay(7000);
     
-    setup_hardware();
     blink_setup_led();
     // blink_setup_led();
     initialize_actuator_motion(); // TEMPORARILY DISABLED: Blocks for 5s without roboclaw
     // blink_setup_led();
     setup_micro_ros();
+    setup_hardware();
     // blink_setup_led(2);
       // Register callbacks for the heartbeat and encoder feedback messages
       fw_state = STATE_IDLE;
@@ -351,7 +351,7 @@ void setup() {
     if (!setupCan()) {
      // Serial.println("CAN failed to initialize: reset required");
         // blink_setup_led(3, 500, 150);
-        while (true); // spin indefinitely
+        // while (true); // spin indefinitely
   }
 
 //   // Serial.println("Waiting for ODrive...");
@@ -376,7 +376,7 @@ void setup() {
       delay(10);
       pumpEvents(can_intf);
     }
-    // break;
+    break;
   }
 }
 
@@ -476,8 +476,7 @@ void setup_micro_ros() {
 
     // Executor with 1 subscription
     rclc_executor_init(&executor, &support.context, 2, &allocator);
-    rclc_executor_add_subscription(&executor, &cmd_sub, &cmd_msg,
-        &cmd_callback, ON_NEW_DATA);
+    rclc_executor_add_subscription(&executor, &cmd_sub, &cmd_msg, &cmd_callback, ON_NEW_DATA);
 
     // Allocate ToF distance array in state message
     state_msg.tof_distances.capacity = NUM_TOF_SENSORS;
@@ -536,7 +535,7 @@ void initialize_actuator_motion() {
     // bool ok = roboclaw.ReadM1PositionPID(
     //     ROBOCLAW_ADDR,
     //     rc_kp,
-    //     rc_ki,
+    //     rc_ki,   
     //     rc_kd,
     //     rc_ki_max,
     //     rc_deadzone,
@@ -565,8 +564,8 @@ void initialize_actuator_motion() {
     unsigned long start_ms = millis();
     // Serial.println("Homing: Moving DOWN...");
     roboclaw.clear(); // Ensure serial buffer is clean
-    roboclaw.BackwardM1(ROBOCLAW_ADDR, 80);
-    
+    roboclaw.BackwardM1(ROBOCLAW_ADDR, 40);
+     
     while (digitalRead(PIN_ACT_LIMIT_IN) != LOW && (millis() - start_ms) < 5000) {
         delay(2);
         blink_setup_led();
@@ -578,10 +577,10 @@ void initialize_actuator_motion() {
     delay(500); // Pause briefly before moving opposite direction
 roboclaw.clear(); // Ensure serial buffer is clean
     
-    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW) {    
+    // if (digitalRead(PIN_ACT_LIMIT_IN) == LOW) {    
         roboclaw.ResetEncoders(ROBOCLAW_ADDR);
         start_ms = millis();
-        roboclaw.ForwardM1(ROBOCLAW_ADDR, 127); // Full power to break away from switch!
+        roboclaw.ForwardM1(ROBOCLAW_ADDR, 80); // Full power to break away from switch!
         while (digitalRead(PIN_ACT_LIMIT_IN) == LOW && (millis() - start_ms) < 3000) {
             delay(2);
             // roboclaw.clear(); // Ensure serial buffer is clean
@@ -593,7 +592,7 @@ roboclaw.clear(); // Ensure serial buffer is clean
         int32_t enc = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
         actuator_home_ticks = valid ? enc : 0;
         actuator_ready = true;
-    }
+    
 }
 
 
