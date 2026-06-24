@@ -1,6 +1,9 @@
 # Climber Robot — Cylinder-Climbing Mecanum Platform
 
-A ROS 2 (Jazzy) robot that wraps around a vertical cylinder (pole/tree) and climbs it using 4 mecanum wheels in an X formation. Each wheel is mounted on a linear actuator that controls radial grip pressure, with ToF sensors providing surface distance feedback.
+A ROS 2 (Jazzy) package for a robot that wraps around a vertical cylinder (pole/tree) and climbs it using 4 mecanum wheels in an X formation. Each wheel is mounted on a linear actuator that controls radial grip pressure, with ToF sensors providing surface distance feedback. 
+
+## Purpose
+This robot was designed for the Farm Robotics Challenge 2026 to address Hawaii's Coconut Rhinoceros Beetle crisis. The invasive beetle is controlled through targeted spraying and cutting, and this package operates the climbing platform that delivers the cutting mechanism to the tops of palm trees.
 
 ```
         W (135°)       N (45°)
@@ -508,17 +511,3 @@ The firmware skeleton targets ESP32 but the structure is portable:
 1. Update `platformio.ini` with your board
 2. Adapt pin definitions in `main.cpp`
 3. Change micro-ROS transport if not using serial (WiFi, Ethernet, etc.)
-
----
-
-## Troubleshooting
-
-| Problem | Diagnosis | Fix |
-|---------|-----------|-----|
-| Robot falls off pole in Gazebo | No mechanical constraint in sim | Use `/grip_cmd` with negative value; increase friction in `gazebo.xacro` |
-| Controllers not loading | `ros2 control list_controllers` shows inactive | Check `climber_controllers.yaml` joint names match URDF |
-| MCU topic not appearing | micro-ROS agent not connecting | Check serial port path, baud rate, udev rules; run agent manually |
-| FAULT state won't clear | Latched fault | Send `CLEAR_FAULT` mode: `ros2 topic pub --once /mcu_n/arm_cmd climber_msgs/msg/ArmCommand "{mode: 3}"` |
-| Wheels spin wrong direction | Encoder wiring or axis sign | Swap encoder A/B wires or invert `PIN_WHEEL_DIR` logic |
-| Actuator overshoots | PID gains too aggressive | Reduce `KP_ACTUATOR` in firmware, increase `KD_ACTUATOR` |
-| `climber_msgs` import error in controller | Package not sourced | `source install/setup.bash` after building |
