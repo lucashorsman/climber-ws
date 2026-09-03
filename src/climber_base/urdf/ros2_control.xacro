@@ -59,41 +59,41 @@
       </joint>
 
       <!-- Linear Actuators (prismatic - control wheel radial distance) -->
-      <!-- NE Actuator -->
+      <!-- N Actuator -->
       <joint name="n_actuator_joint">
         <command_interface name="position">
-          <param name="min">-0.01</param>
-          <param name="max">0.15</param>
+          <param name="min">0.0</param>
+          <param name="max">0.16</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>
       </joint>
 
-      <!-- NW Actuator -->
+      <!-- W Actuator -->
       <joint name="w_actuator_joint">
         <command_interface name="position">
-          <param name="min">-0.01</param>
-          <param name="max">0.15</param>
+          <param name="min">0.0</param>
+          <param name="max">0.16</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>
       </joint>
 
-      <!-- SW Actuator -->
+      <!-- S Actuator -->
       <joint name="s_actuator_joint">
         <command_interface name="position">
-          <param name="min">-0.01</param>
-          <param name="max">0.15</param>
+          <param name="min">0.0</param>
+          <param name="max">0.16</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>
       </joint>
 
-      <!-- SE Actuator -->
+      <!-- E Actuator -->
       <joint name="e_actuator_joint">
         <command_interface name="position">
-          <param name="min">-0.01</param>
-          <param name="max">0.15</param>
+          <param name="min">0.0</param>
+          <param name="max">0.16</param>
         </command_interface>
         <state_interface name="position"/>
         <state_interface name="velocity"/>

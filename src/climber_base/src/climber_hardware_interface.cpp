@@ -200,11 +200,13 @@ hardware_interface::return_type ClimberHardwareInterface::read(
 hardware_interface::return_type ClimberHardwareInterface::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
+  uint8_t mode = current_mode_.load();
+
   for (size_t i = 0; i < NUM_ARMS; ++i) {
     auto cmd = climber_msgs::msg::ArmCommand();
     cmd.actuator_setpoint = static_cast<float>(arms_[i].actuator_position_cmd);
     cmd.wheel_velocity = static_cast<float>(arms_[i].wheel_velocity_cmd);
-    cmd.mode = climber_msgs::msg::ArmCommand::NORMAL;
+    cmd.mode = mode;
 
     arm_cmd_pubs_[i]->publish(cmd);
   }
@@ -232,6 +234,13 @@ void ClimberHardwareInterface::setup_topics()
     RCLCPP_INFO(node_->get_logger(),
       "Topics created for arm '%s'", prefix.c_str());
   }
+
+  arm_mode_sub_ = node_->create_subscription<std_msgs::msg::UInt8>(
+    "/climber_arm_mode", 10,
+    [this](const std_msgs::msg::UInt8::SharedPtr msg) {
+      current_mode_.store(msg->data);
+      RCLCPP_INFO(node_->get_logger(), "Arm mode set to %u", msg->data);
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════

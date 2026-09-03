@@ -6,8 +6,8 @@ std_msgs/Header header
 # Time-of-flight sensor array — distances to climbing surface (metres)
 float32[] tof_distances
 
-# Actuator (prismatic joint) feedback
-float32 actuator_position       # Current position (m). 0 = touching surface
+# Actuator (prismatic joint) feedback - physical stroke coordinates
+float32 actuator_position       # Current position (m). 0 = fully retracted at limit switch, positive = extending toward cylinder
 float32 actuator_velocity       # Current velocity (m/s)
 
 # Wheel encoder feedback

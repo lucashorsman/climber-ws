@@ -1,8 +1,8 @@
 # Command sent to a single arm MCU
 # Subscribed by each micro-ROS node
 
-# Actuator position setpoint (m)
-# 0.0 = wheel touching surface, <0 = pressing in, >0 = pulling away
+# Actuator position setpoint (m) - physical stroke coordinates
+# 0.0 = fully retracted at PIN_ACT_LIMIT_IN (chassis clearance), >0 = extending toward cylinder (up to 0.16m)
 float32 actuator_setpoint
 
 # Wheel angular velocity setpoint (rad/s)

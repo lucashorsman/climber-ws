@@ -22,6 +22,7 @@
 
 #include "climber_msgs/msg/arm_state.hpp"
 #include "climber_msgs/msg/arm_command.hpp"
+#include "std_msgs/msg/u_int8.hpp"
 
 namespace climber_base
 {
@@ -97,6 +98,8 @@ private:
   // Per-arm subscribers & publishers
   std::array<rclcpp::Subscription<climber_msgs::msg::ArmState>::SharedPtr, NUM_ARMS> arm_state_subs_;
   std::array<rclcpp::Publisher<climber_msgs::msg::ArmCommand>::SharedPtr, NUM_ARMS> arm_cmd_pubs_;
+  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr arm_mode_sub_;
+  std::atomic<uint8_t> current_mode_{climber_msgs::msg::ArmCommand::NORMAL};
 
   // Communication health tracking
   std::array<rclcpp::Time, NUM_ARMS> last_state_rx_time_;

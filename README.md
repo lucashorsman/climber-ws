@@ -163,8 +163,9 @@ Plus 4 arc links connecting frame nodes into an outer ring.
 | `wheel_radius` | 0.06 m | Mecanum wheel radius |
 | `wheel_width` | 0.05 m | Wheel width along axle |
 | `actuator_stroke` | 0.16 m | Total actuator travel |
-| `actuator_min` | -0.01 m | Max press-in (grip) |
-| `actuator_max` | 0.15 m | Max pull-out (release) |
+| `actuator_min` | 0.00 m | Fully retracted at chassis limit switch |
+| `actuator_touch` | 0.15 m | Extension touching cylinder surface |
+| `actuator_max` | 0.16 m | Max extension (limit switch / grip preload) |
 
 ### Joint Conventions
 
@@ -175,10 +176,10 @@ Plus 4 arc links connecting frame nodes into an outer ring.
 
 **Actuator joints** (`{n,w,s,e}_actuator_joint`):
 - Type: prismatic
-- Axis: `-1 0 0` (radially inward)
-- Position 0.0 = wheel touching cylinder
-- Position < 0 = pressing into cylinder (grip)
-- Position > 0 = pulling away (release)
+- Axis: `-1 0 0` (radially inward toward cylinder)
+- Position 0.00 = fully retracted at chassis limit switch (`PIN_ACT_LIMIT_IN`)
+- Position ~0.15 = wheel surface touching cylinder
+- Position > 0.15 = pressing into cylinder (grip, up to 0.16m)
 
 ---
 
@@ -258,11 +259,12 @@ When running on real hardware with ToF data:
 | `cylinder_radius` | 0.075 | Must match URDF `cylinder_diameter/2` |
 | `max_wheel_vel` | 10.0 | Clamp for wheel velocity (rad/s) |
 | `cmd_vel_timeout` | 0.5 | Safety stop timeout (s) |
-| `default_grip_position` | -0.005 | Default actuator position (m) |
+| `default_grip_position` | 0.155 | Default actuator position for grip (m) |
+| `touch_position` | 0.15 | Actuator position for surface contact (m) |
 | `grip_distance_target` | 0.003 | Target ToF reading when gripped (m) |
 | `grip_tolerance` | 0.002 | Acceptable ToF deviation (m) |
-| `grip_press_position` | -0.005 | Actuator position for grip (m) |
-| `release_position` | 0.03 | Actuator position for release (m) |
+| `grip_press_position` | 0.155 | Actuator position for grip preload (m) |
+| `release_position` | 0.02 | Actuator position for release / clearance (m) |
 | `max_climb_speed` | 0.5 | Speed limit during climb (m/s) |
 | `use_real_hardware` | false | Enable MCU topic subscriptions |
 | `comms_timeout` | 0.5 | Fault trigger on MCU silence (s) |

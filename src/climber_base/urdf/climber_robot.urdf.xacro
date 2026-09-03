@@ -21,11 +21,12 @@
   <!-- The inner face of the wheel touches the cylinder surface -->
   <xacro:property name="wheel_radial_distance" value="${cylinder_radius + wheel_width/2}"/>
 
-  <!-- Linear actuator properties -->
+  <!-- Linear actuator properties (physical stroke coordinates: 0.0 = retracted at limit switch, positive = extending toward cylinder) -->
   <xacro:property name="actuator_stroke" value="0.16"/>       <!-- 16cm total travel -->
-  <xacro:property name="actuator_home" value="0.0"/>          <!-- 0 = wheel touching cylinder -->
-  <xacro:property name="actuator_min" value="-0.01"/>         <!-- 1cm inward (pressing into cylinder) -->
-  <xacro:property name="actuator_max" value="${actuator_stroke - 0.01}"/>  <!-- 15cm outward (releasing) -->
+  <xacro:property name="actuator_home" value="0.0"/>          <!-- 0 = fully retracted at PIN_ACT_LIMIT_IN -->
+  <xacro:property name="actuator_touch" value="0.15"/>        <!-- 15cm extension = touching cylinder surface -->
+  <xacro:property name="actuator_min" value="0.0"/>           <!-- 0cm (fully retracted clearance) -->
+  <xacro:property name="actuator_max" value="${actuator_stroke}"/>  <!-- 16cm outward (1cm max grip into cylinder) -->
   <xacro:property name="actuator_mass" value="0.3"/>
   <xacro:property name="actuator_length" value="0.06"/>       <!-- Visual length of actuator body -->
   <xacro:property name="actuator_width" value="0.025"/>       <!-- Visual cross-section -->
@@ -136,11 +137,11 @@
       </inertial>
     </link>
 
-    <!-- Linear actuator prismatic joint -->
+    <!-- Linear actuator prismatic joint (physical stroke coordinates) -->
     <!-- Slides along negative X (radially inward, toward cylinder center) -->
-    <!-- position=0 → wheel at default radial distance (touching cylinder) -->
-    <!-- position<0 → wheel pressed harder into cylinder -->
-    <!-- position>0 → wheel pulled away from cylinder -->
+    <!-- position=0.00 → fully retracted at chassis limit switch (PIN_ACT_LIMIT_IN) -->
+    <!-- position=0.15 → wheel touching cylinder surface -->
+    <!-- position=0.16 → max extension (pressing 1cm into cylinder surface) -->
     <joint name="${prefix}_actuator_joint" type="prismatic">
       <parent link="${prefix}_anchor"/>
       <child link="${prefix}_carriage"/>
@@ -153,9 +154,9 @@
     <link name="${prefix}_carriage">
       <!-- Actuator rod visual (the moving part) -->
       <visual>
-        <origin xyz="${-(frame_ring_radius - wheel_radial_distance)/2} 0 0" rpy="0 0 0"/>
+        <origin xyz="${-(frame_ring_radius - (wheel_radial_distance + actuator_touch))/2} 0 0" rpy="0 0 0"/>
         <geometry>
-          <box size="${frame_ring_radius - wheel_radial_distance} ${actuator_width * 0.6} ${actuator_width * 0.6}"/>
+          <box size="${frame_ring_radius - (wheel_radial_distance + actuator_touch)} ${actuator_width * 0.6} ${actuator_width * 0.6}"/>
         </geometry>
         <material name="grey"/>
       </visual>
@@ -167,11 +168,12 @@
     </link>
 
     <!-- Mecanum wheel attached to carriage -->
-    <!-- Offset from carriage to where the wheel center should be -->
+    <!-- At q=0.0 (retracted), wheel center is at wheel_radial_distance + actuator_touch -->
+    <!-- Extending by q brings wheel inward toward cylinder center -->
     <joint name="${prefix}_wheel_joint" type="continuous">
       <parent link="${prefix}_carriage"/>
       <child link="${prefix}_wheel"/>
-      <origin xyz="${-(frame_ring_radius - wheel_radial_distance)} 0 0" rpy="0 0 0"/>
+      <origin xyz="${-(frame_ring_radius - (wheel_radial_distance + actuator_touch))} 0 0" rpy="0 0 0"/>
       <axis xyz="0 -1 0"/>
       <limit effort="10.0" velocity="10.0"/>
       <dynamics damping="0.2" friction="0.3"/>

@@ -38,11 +38,11 @@ Mecanum kinematic mapping:
   Climb (vz):  all wheels same sign → vertical motion
   Orbit (wz):  N/S vs W/E opposite → circumferential motion
 
-Actuator convention (prismatic, radial inward):
-  position  0.0  → wheel surface just touching cylinder
-  position <0    → pressing into cylinder (grip)
-  position >0    → pulling away (release)
-  limits: -0.01 m … +0.15 m
+Actuator convention (physical stroke coordinates):
+  position  0.0   → fully retracted at chassis limit switch (clearance from cylinder)
+  position ~0.15  → wheel surface just touching cylinder
+  position >0.15  → pressing into cylinder (grip, up to 0.16m)
+  limits: 0.0 m … 0.16 m
 """
 
 import enum
@@ -51,7 +51,7 @@ from typing import Optional
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Float64, Float64MultiArray
+from std_msgs.msg import Float64, Float64MultiArray, UInt8
 
 # climber_msgs may not be available in sim-only builds — guard the import
 try:
@@ -92,11 +92,12 @@ class CylinderClimbController(Node):
         self.declare_parameter('cylinder_radius', 0.075)
         self.declare_parameter('max_wheel_vel', 10.0)
         self.declare_parameter('cmd_vel_timeout', 0.5)
-        self.declare_parameter('default_grip_position', -0.005)
+        self.declare_parameter('default_grip_position', 0.155)  # 15.5cm stroke (grip)
+        self.declare_parameter('touch_position', 0.15)          # 15.0cm stroke (surface touch)
         self.declare_parameter('grip_distance_target', 0.003)   # 3mm ToF target
         self.declare_parameter('grip_tolerance', 0.002)         # ±2mm acceptable
-        self.declare_parameter('grip_press_position', -0.005)   # actuator pos for grip
-        self.declare_parameter('release_position', 0.03)        # actuator pos for release
+        self.declare_parameter('grip_press_position', 0.155)    # actuator pos for grip
+        self.declare_parameter('release_position', 0.02)        # actuator pos for release (clearance)
         self.declare_parameter('approach_speed', 0.05)          # m/s approach crawl
         self.declare_parameter('max_climb_speed', 0.5)          # m/s limit during climb
         self.declare_parameter('use_real_hardware', False)       # enable MCU topics
@@ -107,6 +108,7 @@ class CylinderClimbController(Node):
         self.max_wheel_vel = self.get_parameter('max_wheel_vel').value
         self.cmd_vel_timeout = self.get_parameter('cmd_vel_timeout').value
         self.default_grip_pos = self.get_parameter('default_grip_position').value
+        self.touch_pos = self.get_parameter('touch_position').value
         self.grip_distance_target = self.get_parameter('grip_distance_target').value
         self.grip_tolerance = self.get_parameter('grip_tolerance').value
         self.grip_press_pos = self.get_parameter('grip_press_position').value
@@ -152,6 +154,8 @@ class CylinderClimbController(Node):
             Float64MultiArray, '/velocity_controller/commands', 10)
         self.actuator_pos_pub = self.create_publisher(
             Float64MultiArray, '/position_controller/commands', 10)
+        self.mode_pub = self.create_publisher(
+            UInt8, '/climber_arm_mode', 10)
 
         self.climber_state_pub = None
         if HAS_CLIMBER_MSGS:
@@ -216,15 +220,15 @@ class CylinderClimbController(Node):
 
     def grip_callback(self, msg: Float64):
         """Manual grip override — set all actuators to the same position."""
-        pos = max(-0.01, min(0.15, msg.data))
+        pos = max(0.0, min(0.16, msg.data))
         self.grip_positions = [pos] * 4
         self._publish_actuators()
 
         # State transitions for grip
-        if pos < 0:
+        if pos >= self.touch_pos:
             if self.robot_state in (RobotState.IDLE, RobotState.APPROACHING):
                 self._transition(RobotState.GRIPPING)
-        elif pos > 0.02:
+        elif pos <= self.release_pos:
             if self.robot_state in (RobotState.GRIPPING, RobotState.STOPPED):
                 self._transition(RobotState.IDLE)
 
@@ -301,16 +305,19 @@ class CylinderClimbController(Node):
             if not self.arm_tof[i]:
                 continue  # no ToF data yet for this arm
 
-            # Use the minimum ToF reading as the surface distance
-            min_dist = min(self.arm_tof[i])
+            # Use the minimum ToF reading as the surface distance (filtering error codes < 0)
+            valid_readings = [d for d in self.arm_tof[i] if d >= 0.0]
+            if not valid_readings:
+                continue
+            min_dist = min(valid_readings)
 
             error = min_dist - self.grip_distance_target
             if abs(error) > self.grip_tolerance:
-                # Proportional adjustment: positive error = too far → move in
+                # Proportional adjustment: positive error = too far away → extend inward (+step)
                 # Clamp the step to avoid overshoot
                 step = max(-0.002, min(0.002, error * 0.5))
-                new_pos = self.grip_positions[i] - step  # minus because inward is negative
-                self.grip_positions[i] = max(-0.01, min(0.15, new_pos))
+                new_pos = self.grip_positions[i] + step  # plus because extending inward is positive
+                self.grip_positions[i] = max(0.0, min(0.16, new_pos))
 
     # ════════════════════════════════════════════════════════════════
     #  State Machine
@@ -323,6 +330,17 @@ class CylinderClimbController(Node):
         old = self.robot_state.name
         self.robot_state = new_state
         self.get_logger().info(f'State: {old} → {new_state.name}')
+
+        # Publish mode override to hardware interface
+        if hasattr(self, 'mode_pub') and self.mode_pub is not None:
+            mode_msg = UInt8()
+            if new_state == RobotState.FAULT:
+                mode_msg.data = 1  # EMERGENCY_GRIP
+            elif new_state == RobotState.IDLE:
+                mode_msg.data = 2  # RELEASE
+            else:
+                mode_msg.data = 0  # NORMAL
+            self.mode_pub.publish(mode_msg)
 
         # On entering FAULT, command emergency grip
         if new_state == RobotState.FAULT:

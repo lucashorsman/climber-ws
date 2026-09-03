@@ -2,9 +2,9 @@
 
 // Update these pins to match your physical wiring if needed
 // D5 is used for fully retracted limit (IN)
-// D4 is used for fully extended limit (OUT)
+// D3 is used for fully extended limit (OUT) (matches main.cpp)
 #define PIN_ACT_LIMIT_IN  D5  
-#define PIN_ACT_LIMIT_OUT D4  
+#define PIN_ACT_LIMIT_OUT D3  
 
 void setup() {
     Serial.begin(115200);

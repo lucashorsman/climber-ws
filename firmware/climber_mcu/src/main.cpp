@@ -1,20 +1,19 @@
 /*
- * Climber MCU Firmware — Skeleton
+ * Climber MCU Firmware — Arduino Nano ESP32
  *
- * Single firmware for all 4 arm MCUs. ARM_ID selects which arm this
- * instance controls (set via platformio.ini build flag or DIP switch).
+ * Single firmware for all 4 arm MCUs (N, W, S, E). ARM_ID selects which arm this
+ * instance controls (set via platformio.ini build flag).
  *
- *   - Fast local PID loop for actuator position control using ToF feedback
- *   - Wheel velocity passthrough to motor driver
- *   - Local safety override: emergency grip on comms loss or contact fault
- *   - Publishes ArmState at ~50 Hz to ROS 2 via micro-ROS
+ *   - Local PID loop for actuator position control using RoboClaw encoder feedback
+ *   - Wheel velocity control via ODrive over CAN (TWAI)
+ *   - Publishes ArmState at 50 Hz to ROS 2 via micro-ROS
  *   - Subscribes to ArmCommand from ROS 2 via micro-ROS
  *
- * Hardware assumptions (adapt to your board):
- *   - Wheel motor: DC motor with encoder, driven via H-bridge PWM
- *   - Linear actuator: DC motor or stepper with limit switches
- *   - ToF sensors: VL53L0X or VL53L1X array on I2C multiplexer
- *   - Encoder: quadrature, read via hardware timer interrupt
+ * Hardware configuration (Arduino Nano ESP32):
+ *   - Wheel motor: ODrive over CAN bus (TWAI: TX=D8/GPIO18, RX=D9/GPIO17)
+ *   - Linear actuator: RoboClaw controller via UART (RX=D7, TX=D6, 38400 baud)
+ *   - ToF sensors: VL53L0X on TCA9548A I2C multiplexer (channel 2)
+ *   - Limit switches: D5 (IN - retracted), D3 (OUT - extended)
  */
 
 #include <Arduino.h>
@@ -152,10 +151,11 @@ static const char* ARM_NAME = ARM_NAMES[ARM_ID];
 #define ROBO_MAX_SPEED 10000
 #define ROBO_MIN_SPEED 50
 
-// Actuator limits (metres, matching URDF)
-#define ACTUATOR_MIN     -0.01f
-#define ACTUATOR_MAX      0.15f
-#define EMERGENCY_GRIP   -0.008f  // clamp position on fault
+// Actuator limits (metres, physical stroke coordinates: 0.0 = retracted at PIN_ACT_LIMIT_IN, positive = extending toward cylinder)
+#define ACTUATOR_MIN      0.0f    // fully retracted at chassis limit switch
+#define ACTUATOR_MAX      0.16f   // fully extended limit switch (PIN_ACT_LIMIT_OUT)
+#define EMERGENCY_GRIP    0.155f  // clamp position on fault / emergency grip (preload extension)
+#define ACTUATOR_RELEASE  0.02f   // clearance position when commanded to release
 
 // PID gains for actuator position control (tune these!)
 #define KP_ACTUATOR  7.17f
@@ -205,7 +205,7 @@ static constexpr float TWO_PI_F = 2.0f * PI_F;
 #define PIN_TOF_XSHUT_1   A1
 #define PIN_TOF_XSHUT_2   A2
 
-#define NUM_TOF_SENSORS   1
+#define NUM_TOF_SENSORS   1 // FLAG: We were having issues with the multiplexor, so we went down to 1 for now
 
 // ═══════════════════════════════════════════════════════════════════
 //  Global state
@@ -217,7 +217,7 @@ enum FirmwareState : uint8_t {
     STATE_IDLE,
     STATE_NORMAL,
     STATE_EMERGENCY_GRIP,
-    STATE_FAULT
+    STATE_FAULT // FLAG: STATE_FAULT is currently not transitioned to by any fault detector; to be implemented later.
 };
 
 static volatile FirmwareState fw_state = STATE_INIT;
@@ -334,7 +334,7 @@ void setup() {
     
     blink_setup_led();
     // blink_setup_led();
-    initialize_actuator_motion(); // TEMPORARILY DISABLED: Blocks for 5s without roboclaw
+    initialize_actuator_motion(); // Blocks for 5s without roboclaw
     // blink_setup_led();
     setup_micro_ros();
     setup_hardware();
@@ -343,7 +343,7 @@ void setup() {
       fw_state = STATE_IDLE;
       last_control_us = micros();
       
-      // Topic names: /mcu_{ne,nw,sw,se}/arm_state and /mcu_{ne,nw,sw,se}/arm_cmd
+      // Topic names: /mcu_{n,w,s,e}/arm_state and /mcu_{n,w,s,e}/arm_cmd
       // (created in setup_micro_ros)
       
     odrv0.onFeedback(onFeedback, &odrv0_user_data);
@@ -389,7 +389,8 @@ void loop() {
     unsigned long now_ms = millis();
     pumpEvents(can_intf); // This is required on some platforms to handle incoming feedback CAN messages
 
-    // ── Fast control loop (1 kHz) ────────────────────────────────
+    // ── Control loop (50 Hz) ──────────────────────────────────────
+    // FLAG: Running at 50 Hz for now; should be running this faster once the system is proven
     float dt = (now_us - last_control_us) / 1e6f;
     if (dt >= (1.0f / CONTROL_LOOP_HZ)) {
         last_control_us = now_us;
@@ -419,15 +420,16 @@ void loop() {
             case STATE_IDLE:
             default:
                 set_wheel_motor(0.0f);
-                set_actuator_motor(0.0f);
+                run_actuator_pid(dt); // Move toward release/retracted setpoint and hold
                 break;
         }
 
         // Safety checks
+        // FLAG / TODO: Safety checks currently disabled; to be fixed and re-enabled later.
         //check_safety();
     }
 
-    // ── ToF sensor read (100 Hz) ─────────────────────────────────
+    // ── ToF sensor read (50 Hz) ───────────────────────────────────
     if ((now_ms - last_tof_read_ms) >= (1000 / TOF_READ_HZ)) {
         last_tof_read_ms = now_ms;
         read_tof_sensors();
@@ -457,6 +459,9 @@ void setup_micro_ros() {
     char node_name[16];
     snprintf(node_name, sizeof(node_name), "mcu_%s", ARM_NAME);
     rclc_node_init_default(&node, node_name, "", &support);
+
+    // Synchronize time with micro-ROS agent
+    rmw_uros_sync_session(1000);
 
     // Publisher: /mcu_{arm}/arm_state
     char state_topic[32];
@@ -523,6 +528,7 @@ void tca_select(uint8_t channel) {
 void setup_tof_sensors() {
     for (uint8_t i = 0; i < NUM_TOF_SENSORS; i++) {
         // tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
+        // FLAG: Multiplexer channel hardcoded to 2 for now due to multiplexer issues
         tca_select(2);
         tof_sensor_ok[i] = tof_sensors[i].begin(0x29, false, &Wire);
     }
@@ -572,27 +578,44 @@ void initialize_actuator_motion() {
     }
     roboclaw.clear(); // Ensure serial buffer is clean
     
-    // delay(500); // Pause briefly before writing stop
     roboclaw.BackwardM1(ROBOCLAW_ADDR, 0);
     delay(500); // Pause briefly before moving opposite direction
-roboclaw.clear(); // Ensure serial buffer is clean
+    roboclaw.clear(); // Ensure serial buffer is clean
     
-    // if (digitalRead(PIN_ACT_LIMIT_IN) == LOW) {    
-        roboclaw.ResetEncoders(ROBOCLAW_ADDR);
-        start_ms = millis();
-        roboclaw.ForwardM1(ROBOCLAW_ADDR, 80); // Full power to break away from switch!
-        while (digitalRead(PIN_ACT_LIMIT_IN) == LOW && (millis() - start_ms) < 3000) {
-            delay(2);
-            // roboclaw.clear(); // Ensure serial buffer is clean
-        }
-        roboclaw.ForwardM1(ROBOCLAW_ADDR, 0);
+    // Verify that the limit switch was actually contacted
+    if (digitalRead(PIN_ACT_LIMIT_IN) != LOW) {
+        // Homing failed: limit switch was never triggered
+        actuator_ready = false;
+        fw_state = STATE_FAULT;
+        return;
+    }
 
-        uint8_t status;
-        bool valid;
-        int32_t enc = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
-        actuator_home_ticks = valid ? enc : 0;
+    roboclaw.ResetEncoders(ROBOCLAW_ADDR);
+    start_ms = millis();
+    roboclaw.ForwardM1(ROBOCLAW_ADDR, 80); // Full power to break away from switch!
+    while (digitalRead(PIN_ACT_LIMIT_IN) == LOW && (millis() - start_ms) < 3000) {
+        delay(2);
+    }
+    roboclaw.ForwardM1(ROBOCLAW_ADDR, 0);
+
+    // Verify successful breakaway from switch
+    if (digitalRead(PIN_ACT_LIMIT_IN) == LOW) {
+        // Failed to break away from limit switch
+        actuator_ready = false;
+        fw_state = STATE_FAULT;
+        return;
+    }
+
+    uint8_t status;
+    bool valid;
+    int32_t enc = roboclaw.ReadEncM1(ROBOCLAW_ADDR, &status, &valid);
+    if (valid) {
+        actuator_home_ticks = enc;
         actuator_ready = true;
-    
+    } else {
+        actuator_ready = false;
+        fw_state = STATE_FAULT;
+    }
 }
 
 
@@ -609,7 +632,7 @@ void read_tof_sensors() {
         }
 
         // tca_select(i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 2 : i == 3 ? 6 : 7);
-
+        // FLAG: Multiplexer channel hardcoded to 2 for now due to multiplexer issues
         tca_select(2);
         tof_sensors[i].rangingTest(&measure, false);
 
@@ -684,7 +707,8 @@ void read_actuator_position_sensor() {
 
 
 
-//todo: may not be needed due to christians code, update when we get it.
+// Actuator position PID control using RoboClaw internal encoder feedback
+// (todo: may not be needed due to christians code, update when we get it)
 void run_actuator_pid(float dt) {
     (void)dt;
     if (!actuator_ready) {
@@ -779,12 +803,14 @@ void update_actuator_pid() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Motor drivers (implement for your H-bridge)
+//  Motor drivers (ODrive over CAN & RoboClaw over UART)
 // ═══════════════════════════════════════════════════════════════════
 
 void set_wheel_motor(float velocity_cmd) {
-odrv0.setVelocity(velocity_cmd); // Set velocity for axis 0 
-
+    // FLAG / NOTE: ROS 2 ArmCommand provides wheel_velocity in rad/s, while ODrive
+    // setVelocity typically expects turns/s (revolutions/s). Verify whether
+    // velocity_cmd needs to be divided by TWO_PI_F.
+    odrv0.setVelocity(velocity_cmd); // Set velocity for axis 0 
 }
 
 void set_actuator_motor(float output) {
@@ -807,23 +833,27 @@ void cmd_callback(const void* msg_in) {
         case 0:  // NORMAL
             cmd_actuator_setpoint = constrain(cmd->actuator_setpoint, ACTUATOR_MIN, ACTUATOR_MAX);
             cmd_wheel_velocity = cmd->wheel_velocity;
-            if (fw_state == STATE_IDLE || fw_state == STATE_EMERGENCY_GRIP) {
+            // Only transition from IDLE to NORMAL; preserve safety states (EMERGENCY_GRIP, FAULT)
+            if (fw_state == STATE_IDLE) {
                 fw_state = STATE_NORMAL;
             }
             break;
 
         case 1:  // EMERGENCY_GRIP
+            cmd_actuator_setpoint = EMERGENCY_GRIP;
+            cmd_wheel_velocity = 0.0f;
             fw_state = STATE_EMERGENCY_GRIP;
             break;
 
         case 2:  // RELEASE
-            cmd_actuator_setpoint = ACTUATOR_MAX;
+            // Retract actuator back to clearance position near chassis
+            cmd_actuator_setpoint = ACTUATOR_RELEASE;
             cmd_wheel_velocity = 0.0f;
-            fw_state = STATE_NORMAL;
+            fw_state = STATE_IDLE;  // Reports contact_state = RELEASED (2)
             break;
 
         case 3:  // CLEAR_FAULT
-            if (fw_state == STATE_FAULT) {
+            if (fw_state == STATE_FAULT || fw_state == STATE_EMERGENCY_GRIP) {
                 actuator_pid_integral = 0.0f;
                 actuator_last_error = 0;
                 actuator_pid_active = false;
@@ -834,7 +864,7 @@ void cmd_callback(const void* msg_in) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  Safety checks
+//  Safety checks (FLAG: To be reviewed, debugged, and re-enabled later)
 // ═══════════════════════════════════════════════════════════════════
 
 void check_safety() {
@@ -856,7 +886,7 @@ void check_safety() {
         // If all sensors read > 200mm, we've likely lost the surface
         // (Threshold increased to 0.20f because actuator max release is 0.15m)
         if (min_tof > 0.20f) {
-            // Uncomment below to re-enable ToF safety retraction
+            // FLAG / TODO: Re-enable ToF safety retraction once sensor error values are filtered
             // fw_state = STATE_EMERGENCY_GRIP; 
         }
     }
@@ -867,8 +897,11 @@ void check_safety() {
 // ═══════════════════════════════════════════════════════════════════
 
 void publish_state() {
-    // Fill message
-    // state_msg.header.stamp = ... // micro-ROS handles this if agent syncs time
+    // Fill message timestamp from micro-ROS synchronized time
+    int64_t time_ns = rmw_uros_epoch_nanos();
+    state_msg.header.stamp.sec = (int32_t)(time_ns / 1000000000LL);
+    state_msg.header.stamp.nanosec = (uint32_t)(time_ns % 1000000000LL);
+
     state_msg.actuator_position = actuator_position;
     state_msg.actuator_velocity = actuator_velocity;
     state_msg.wheel_position = wheel_position;
