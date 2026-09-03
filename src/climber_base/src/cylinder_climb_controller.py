@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cylinder Climb Controller — Full Version (Option C)
+Cylinder Climb Controller — Full Version
 
 Central decision-making node for a 4-mecanum-wheel cylinder-climbing robot.
 

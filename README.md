@@ -65,7 +65,7 @@ climber-ws/
 
 ## System Architecture
 
-### Option C — Hybrid Control
+### Hybrid Control
 
 Global decision-making in ROS 2 with fast local safety loops on each MCU.
 
